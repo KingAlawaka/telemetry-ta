@@ -1,3 +1,7 @@
+            // Debug output
+            console.log('Category Weights:', catWeights);
+            console.log('Behaviour Weights:', behaviourWeights);
+            console.log('Category Behaviours:', categoryBehaviours);
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -191,19 +195,14 @@
                 const toolName = row.querySelector('td').textContent;
                 let cat = row.closest('table').parentElement.previousSibling.textContent.replace('Category:','').trim().toLowerCase();
                 let overrideActive = row.querySelector(`input[name="${toolName}_${cat}_override_active"]`).checked ? 'true' : 'false';
+                let config = { tool_name: toolName, trust_evaluation_category: cat, mapped_request_id: toolCatIdMap[`${toolName}|||${cat}`] || '', override_active: overrideActive };
                 if (overrideActive === 'true') {
-                    let config = { tool_name: toolName, trust_evaluation_category: cat };
-                    config.mapped_request_id = toolCatIdMap[`${toolName}|||${cat}`] || '';
-                    config.override_active = 'true';
                     config.override_count = row.querySelector(`input[name="${toolName}_${cat}_override_count"]`).value;
                     config.override_impact = row.querySelector(`select[name="${toolName}_${cat}_override_impact"]`).value;
                     config.override_behaviour = row.querySelector(`select[name="${toolName}_${cat}_override_behaviour"]`).value;
-                    configsToSave.push(config);
-                } else {
-                    // Only save override_active false, no other details
-                    let config = { tool_name: toolName, trust_evaluation_category: cat, mapped_request_id: toolCatIdMap[`${toolName}|||${cat}`] || '', override_active: 'false' };
-                    configsToSave.push(config);
                 }
+                // If override is not active, do NOT send override fields (they will be removed in backend, but this is safer)
+                configsToSave.push(config);
             });
             // Save all configs
             let completed = 0;
@@ -572,7 +571,7 @@
                 const overrideActive = cfg.override_active === 'true';
                 const overrideCount = cfg.override_count || '';
                 const overrideBehaviour = cfg.override_behaviour || 'normal';
-                const oneToolBehaviour = cfg.one_tool_behaviour || 'normal';
+                const toolBehaviour = cfg.tool_behaviour || 'normal';
                 const finalBehaviour = cfg.final_behaviour || 'normal';
                 html += `<div class="mb-4 p-3 border rounded">
                     <h5>Category: <b>${capitalizeWords(cat)}</b></h5>
@@ -585,18 +584,18 @@
                             <input type="checkbox" class="form-check-input" name="${cat}_override_active" value="true" ${overrideActive ? 'checked' : ''}> Activate Override
                         </label><br>
                         <input type="number" min="1" class="form-control d-inline w-auto" style="width:80px;" name="${cat}_override_count" placeholder="Number of tools" value="${overrideCount}">
-                        <select class="form-select w-auto d-inline" name="${cat}_override_behaviour">
-                            <option value="normal" ${overrideBehaviour==='normal'?'selected':''}>Normal</option>
-                            <option value="unpredictable" ${overrideBehaviour==='unpredictable'?'selected':''}>Unpredictable</option>
-                            <option value="malicious" ${overrideBehaviour==='malicious'?'selected':''}>Malicious</option>
+                        <select class="form-select w-auto d-inline" name="${cat}_tool_behaviour">
+                            <option value="normal" ${toolBehaviour==='normal'?'selected':''}>Normal</option>
+                            <option value="unpredictable" ${toolBehaviour==='unpredictable'?'selected':''}>Unpredictable</option>
+                            <option value="malicious" ${toolBehaviour==='malicious'?'selected':''}>Malicious</option>
                         </select>
                         <span class="text-secondary ms-2">(If at least <b>number of tools</b> then <b>behaviour</b>)</span>
                     </div>
                     <div class="mt-2">If at least one tool with this behaviour:
-                        <select class="form-select w-auto d-inline" name="${cat}_one_tool_behaviour">
-                            <option value="normal" ${oneToolBehaviour==='normal'?'selected':''}>Normal</option>
-                            <option value="unpredictable" ${oneToolBehaviour==='unpredictable'?'selected':''}>Unpredictable</option>
-                            <option value="malicious" ${oneToolBehaviour==='malicious'?'selected':''}>Malicious</option>
+                        <select class="form-select w-auto d-inline" name="${cat}_override_behaviour">
+                            <option value="normal" ${overrideBehaviour==='normal'?'selected':''}>Normal</option>
+                            <option value="unpredictable" ${overrideBehaviour==='unpredictable'?'selected':''}>Unpredictable</option>
+                            <option value="malicious" ${overrideBehaviour==='malicious'?'selected':''}>Malicious</option>
                         </select>
                         <span class="text-secondary ms-2">(Result in this behaviour)</span>
                     </div>
@@ -616,17 +615,17 @@
             blocks.forEach(block => {
                 const cat = block.querySelector('h5 b').textContent.trim().toLowerCase();
                 const overrideActive = block.querySelector(`input[name="${cat}_override_active"]`).checked ? 'true' : 'false';
-                const overrideCount = block.querySelector(`input[name="${cat}_override_count"]`).value;
-                const overrideBehaviour = block.querySelector(`select[name="${cat}_override_behaviour"]`).value;
-                const oneToolBehaviour = block.querySelector(`select[name="${cat}_one_tool_behaviour"]`).value;
                 let config = {
                     trust_evaluation_category: cat,
-                    override_active: overrideActive,
-                    override_count: overrideActive === 'true' ? overrideCount : '',
-                    override_behaviour: overrideActive === 'true' ? overrideBehaviour : 'normal',
-                    one_tool_behaviour: oneToolBehaviour,
-                    final_behaviour: block.querySelector('div.mt-2 b').textContent.trim().toLowerCase()
+                    override_active: overrideActive
                 };
+                if (overrideActive === 'true') {
+                    config.override_count = block.querySelector(`input[name="${cat}_override_count"]`).value;
+                    // Assign override_behaviour from its own dropdown
+                    config.override_behaviour = block.querySelector(`select[name="${cat}_override_behaviour"]`).value;
+                }
+                // Always get tool_behaviour from its own dropdown
+                config.tool_behaviour = block.querySelector(`select[name="${cat}_tool_behaviour"]`).value;
                 configsToSave.push(config);
             });
             let completed = 0;
@@ -921,18 +920,35 @@
                 let behaviours = tools.map(tool => toolBehaviours[`${tool.tool_name}|||${cat}`]);
                 let finalCatBehaviour = 'normal';
                 if (step3Cfg.override_active === 'true') {
+                    // If at least override_count tools have override_behaviour, set category behaviour to override_behaviour
                     const count = parseInt(step3Cfg.override_count || '0');
                     const target = step3Cfg.override_behaviour || 'normal';
                     const num = behaviours.filter(b => b === target).length;
-                    if (num >= count) finalCatBehaviour = target;
+                    if (num >= count) {
+                        finalCatBehaviour = target;
+                    } else {
+                        // If not enough for override, use majority rule
+                        const counts = {normal:0,unpredictable:0,malicious:0};
+                        behaviours.forEach(b => {counts[b] = (counts[b]||0)+1;});
+                        let max = 'normal';
+                        if (counts.malicious > counts.normal && counts.malicious > counts.unpredictable) max = 'malicious';
+                        else if (counts.unpredictable > counts.normal && counts.unpredictable > counts.malicious) max = 'unpredictable';
+                        else if (counts.normal > counts.unpredictable && counts.normal > counts.malicious) max = 'normal';
+                        else if (counts.normal === counts.unpredictable || counts.normal === counts.malicious || counts.unpredictable === counts.malicious) max = 'unpredictable';
+                        finalCatBehaviour = max;
+                    }
                 } else {
+                    // Default: majority rule
                     const counts = {normal:0,unpredictable:0,malicious:0};
                     behaviours.forEach(b => {counts[b] = (counts[b]||0)+1;});
                     let max = 'normal';
                     if (counts.malicious > counts.normal && counts.malicious > counts.unpredictable) max = 'malicious';
                     else if (counts.unpredictable > counts.normal && counts.unpredictable > counts.malicious) max = 'unpredictable';
+                    else if (counts.normal > counts.unpredictable && counts.normal > counts.malicious) max = 'normal';
+                    else if (counts.normal === counts.unpredictable || counts.normal === counts.malicious || counts.unpredictable === counts.malicious) max = 'unpredictable';
                     finalCatBehaviour = max;
                 }
+                // If at least one tool with one_tool_behaviour, set to that behaviour
                 if (step3Cfg.one_tool_behaviour) {
                     if (behaviours.includes(step3Cfg.one_tool_behaviour)) finalCatBehaviour = step3Cfg.one_tool_behaviour;
                 }
@@ -991,6 +1007,35 @@
             categories.forEach(cat => {
                 html += `<div class="mb-2">${cat}: <input type="range" min="0" max="100" value="20" name="cat_weight_${cat}" style="width:150px;" oninput="document.getElementById('cat_weight_${cat}_val').textContent=this.value"> <span id="cat_weight_${cat}_val">20</span></div>`;
             });
+            html += '<button class="btn btn-secondary mt-2" id="normaliseWeightsBtn">Normalise Weights</button>';
+        document.getElementById('trust-score-config-weights').addEventListener('click', function(e) {
+            if (e.target && e.target.id === 'normaliseWeightsBtn') {
+                normaliseCategoryWeights();
+            }
+        });
+
+        function normaliseCategoryWeights() {
+            const categories = [
+                'Security',
+                'Reliability',
+                'Resilience',
+                'Dependability & Uncertainty',
+                'Goal Analysis'
+            ];
+            let total = 0;
+            let weights = {};
+            categories.forEach(cat => {
+                let val = parseInt(document.querySelector(`[name='cat_weight_${cat}']`).value) || 0;
+                weights[cat] = val;
+                total += val;
+            });
+            if (total === 0) total = 1;
+            categories.forEach(cat => {
+                let norm = Math.round((weights[cat] / total) * 100);
+                document.querySelector(`[name='cat_weight_${cat}']`).value = norm;
+                document.getElementById(`cat_weight_${cat}_val`).textContent = norm;
+            });
+        }
             html += '<b>Assign weights for behaviour types:</b><br>';
             html += `<div class="mb-2">Normal: <input type="number" min="0" max="100" value="100" name="behaviour_weight_normal" class="form-control d-inline w-auto"></div>`;
             html += `<div class="mb-2">Unpredictable: <input type="number" min="0" max="100" value="50" name="behaviour_weight_unpredictable" class="form-control d-inline w-auto"></div>`;
@@ -1029,18 +1074,20 @@
                 malicious: parseInt(document.querySelector('[name="behaviour_weight_malicious"]').value) || 0
             };
             // Get category behaviours from simulation (reuse simulateTrustAnalyser logic)
-            const [mappedResp, step1Resp, step2Resp, step3Resp, step4Resp] = await Promise.all([
+            const [mappedResp, step1Resp, step2Resp, step3Resp, step4Resp, step5Resp] = await Promise.all([
                 fetch('/mapped'),
                 fetch('/trust-config-step1-get-all'),
                 fetch('/trust-config-step2-get-all'),
                 fetch('/trust-config-step3-get-all'),
-                fetch('/trust-config-step4-get')
+                fetch('/trust-config-step4-get'),
+                fetch('/tool-config-step5-get')
             ]);
             const mapped = await mappedResp.json();
             const step1 = await step1Resp.json();
             const step2 = await step2Resp.json();
             const step3 = await step3Resp.json();
             const step4 = await step4Resp.json();
+            const step5 = await step5Resp.json();
             // Build lookup maps
             const step1Map = {};
             step1.forEach(cfg => {
@@ -1118,34 +1165,60 @@
                 let behaviours = tools.map(tool => toolBehaviours[`${tool.tool_name}|||${cat}`]);
                 let finalCatBehaviour = 'normal';
                 if (step3Cfg.override_active === 'true') {
-                    // If at least override_count tools have override_behaviour
+                    // If at least override_count tools have override_behaviour, set category behaviour to override_behaviour
                     const count = parseInt(step3Cfg.override_count || '0');
                     const target = step3Cfg.override_behaviour || 'normal';
                     const num = behaviours.filter(b => b === target).length;
-                    if (num >= count) finalCatBehaviour = target;
+                    if (num >= count) {
+                        finalCatBehaviour = target;
+                    } else {
+                        // If not enough for override, use majority rule
+                        const counts = {normal:0,unpredictable:0,malicious:0};
+                        behaviours.forEach(b => {counts[b] = (counts[b]||0)+1;});
+                        let max = 'normal';
+                        if (counts.malicious > counts.normal && counts.malicious > counts.unpredictable) max = 'malicious';
+                        else if (counts.unpredictable > counts.normal && counts.unpredictable > counts.malicious) max = 'unpredictable';
+                        else if (counts.normal > counts.unpredictable && counts.normal > counts.malicious) max = 'normal';
+                        else if (counts.normal === counts.unpredictable || counts.normal === counts.malicious || counts.unpredictable === counts.malicious) max = 'unpredictable';
+                        finalCatBehaviour = max;
+                    }
                 } else {
-                    // Majority
+                    // Default: majority rule
                     const counts = {normal:0,unpredictable:0,malicious:0};
                     behaviours.forEach(b => {counts[b] = (counts[b]||0)+1;});
                     let max = 'normal';
                     if (counts.malicious > counts.normal && counts.malicious > counts.unpredictable) max = 'malicious';
                     else if (counts.unpredictable > counts.normal && counts.unpredictable > counts.malicious) max = 'unpredictable';
+                    else if (counts.normal > counts.unpredictable && counts.normal > counts.malicious) max = 'normal';
+                    else if (counts.normal === counts.unpredictable || counts.normal === counts.malicious || counts.unpredictable === counts.malicious) max = 'unpredictable';
                     finalCatBehaviour = max;
                 }
-                // If at least one tool with one_tool_behaviour
+                // If at least one tool with one_tool_behaviour, set to that behaviour
                 if (step3Cfg.one_tool_behaviour) {
                     if (behaviours.includes(step3Cfg.one_tool_behaviour)) finalCatBehaviour = step3Cfg.one_tool_behaviour;
                 }
                 categoryBehaviours[cat] = finalCatBehaviour;
             });
             // 4. Trust Score Calculation
+            // Normalize behaviour weights if sum > 100
+            let behTotal = behaviourWeights.normal + behaviourWeights.unpredictable + behaviourWeights.malicious;
+            if (behTotal > 100) {
+                Object.keys(behaviourWeights).forEach(b => {
+                    behaviourWeights[b] = Math.round((behaviourWeights[b] / behTotal) * 100);
+                });
+            }
             let score = 0;
             let details = '<b>Trust Score Calculation:</b><ul>';
             categories.forEach(cat => {
                 let catKey = cat.trim().toLowerCase();
-                let behaviour = categoryBehaviours[cat] || 'normal';
+                // Try matching categoryBehaviours by lowercased key
+                let behaviour = categoryBehaviours[catKey] || categoryBehaviours[cat] || 'normal';
                 let catWeight = catWeights[cat];
                 let behWeight = behaviourWeights[behaviour];
+                if (behWeight === undefined) {
+                    details += `<li class='text-danger'>${cat}: Behaviour '${behaviour}' not found in weights! Using 0.</li>`;
+                    behWeight = 0;
+                }
                 let partial = (catWeight * behWeight) / 100;
                 score += partial;
                 details += `<li>${cat}: Weight=${catWeight}, Behaviour=${behaviour}, Behaviour Weight=${behWeight}, Partial=${partial.toFixed(2)}</li>`;
@@ -1157,6 +1230,10 @@
             if (e.target && e.target.id === 'calcTrustScoreBtn') {
                 calcTrustScore();
             }
+        });
+        // Also connect button directly in case it's outside trust-config
+        document.getElementById('calcTrustScoreBtn').addEventListener('click', function() {
+            calcTrustScore();
         });
         function renderMappedRequestsTable(mappedRequests) {
             const tableBody = document.getElementById('mapped-requests-table-body');

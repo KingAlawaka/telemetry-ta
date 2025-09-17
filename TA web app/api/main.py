@@ -7,6 +7,7 @@ import os
 from dotenv import load_dotenv
 from typing import Optional
 import json
+import traceback
 
 load_dotenv()
 
@@ -165,11 +166,17 @@ async def save_trust_config_step2(request: Request):
             config.pop("override_count", None)
             config.pop("override_impact", None)
             config.pop("override_behaviour", None)
-        TRUST_CONFIG_STEP2_COLLECTION.update_one(
-            {"tool_name": tool_name, "trust_evaluation_category": trust_evaluation_category},
-            {"$set": config},
-            upsert=True
-        )
+            TRUST_CONFIG_STEP2_COLLECTION.update_one(
+                {"tool_name": tool_name, "trust_evaluation_category": trust_evaluation_category},
+                {"$set": config, "$unset": {"override_count": "", "override_impact": "", "override_behaviour": ""}},
+                upsert=True
+            )
+        else:
+            TRUST_CONFIG_STEP2_COLLECTION.update_one(
+                {"tool_name": tool_name, "trust_evaluation_category": trust_evaluation_category},
+                {"$set": config},
+                upsert=True
+            )
         return {"status": "success"}
     except Exception as e:
         return JSONResponse(status_code=500, content={"status": "fail", "error": str(e)})
@@ -234,19 +241,34 @@ async def get_trust_config_step2_all():
 async def save_trust_config_step3(request: Request):
     try:
         config = await request.json()
+        print("Received payload:", config)
         cat = config.get("trust_evaluation_category")
         if not cat:
             return JSONResponse(status_code=400, content={"status": "fail", "error": "Missing trust_evaluation_category"})
-        # Ensure one_tool_behaviour is stored
-        if "one_tool_behaviour" not in config:
-            config["one_tool_behaviour"] = "normal"
+        config.pop("one_tool_behaviour", None)
+        set_fields = dict(config)
+        unset_fields = {}
+        if config.get("override_active") == "true":
+            allowed = {"trust_evaluation_category", "override_active", "override_count", "override_behaviour", "tool_behaviour"}
+            set_fields = {k: v for k, v in config.items() if k in allowed}
+            # Unset fields that are NOT present in set_fields
+            for field in ["final_behaviour", "one_tool_behaviour"]:
+                unset_fields[field] = ""
+            for field in ["override_count", "override_behaviour", "tool_behaviour"]:
+                if field not in set_fields:
+                    unset_fields[field] = ""
+        else:
+            set_fields = {"trust_evaluation_category": cat, "override_active": config.get("override_active")}
+            for field in ["override_count", "override_behaviour", "final_behaviour", "one_tool_behaviour", "tool_behaviour"]:
+                unset_fields[field] = ""
         TRUST_CONFIG_STEP3_COLLECTION.update_one(
             {"trust_evaluation_category": cat},
-            {"$set": config},
+            {"$set": set_fields, "$unset": unset_fields},
             upsert=True
         )
         return {"status": "success"}
     except Exception as e:
+        print(traceback.format_exc())
         return JSONResponse(status_code=500, content={"status": "fail", "error": str(e)})
 
 @app.get("/trust-config-step3-get-all")
@@ -261,8 +283,17 @@ async def get_trust_config_step3_all():
 async def save_trust_config_step4(request: Request):
     try:
         config = await request.json()
-        TRUST_CONFIG_STEP4_COLLECTION.delete_many({})
-        TRUST_CONFIG_STEP4_COLLECTION.insert_one(config)
+        # Remove override fields if not active
+        if config.get("override_active") != "true":
+            config.pop("override_count", None)
+            config.pop("override_behaviour", None)
+            TRUST_CONFIG_STEP4_COLLECTION.delete_many({})
+            # Unset override fields in the only doc
+            TRUST_CONFIG_STEP4_COLLECTION.insert_one(config)
+            TRUST_CONFIG_STEP4_COLLECTION.update_one({}, {"$unset": {"override_count": "", "override_behaviour": ""}})
+        else:
+            TRUST_CONFIG_STEP4_COLLECTION.delete_many({})
+            TRUST_CONFIG_STEP4_COLLECTION.insert_one(config)
         return {"status": "success"}
     except Exception as e:
         return JSONResponse(status_code=500, content={"status": "fail", "error": str(e)})
