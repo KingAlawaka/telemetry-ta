@@ -1,0 +1,7 @@
+# Use the official MongoDB image from Docker Hub
+FROM mongo:7.0
+
+# Expose default MongoDB port
+EXPOSE 27017
+
+# No additional configuration needed for basic local development

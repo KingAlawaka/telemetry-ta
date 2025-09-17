@@ -1,0 +1,1192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Telemetry Dashboard</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+    <style>
+        .json-collapsed { display: none; }
+        .json-expanded { display: block; }
+        .pointer { cursor: pointer; }
+        .json-tree { font-family: monospace; font-size: 0.95em; }
+        .json-key { color: #007bff; cursor: pointer; }
+        .json-leaf { color: #333; cursor: pointer; }
+        .json-branch { margin-left: 1em; }
+    </style>
+</head>
+<body>
+    <div class="container mt-5">
+        <h1>Telemetry Dashboard</h1>
+        <ul class="nav nav-tabs" id="dashboardTabs" role="tablist">
+            <li class="nav-item" role="presentation">
+                <button class="nav-link active" id="requests-tab" data-bs-toggle="tab" data-bs-target="#requests" type="button" role="tab">Requests</button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="mapped-tab" data-bs-toggle="tab" data-bs-target="#mapped" type="button" role="tab">Mapped Requests</button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="trust-config-tab" data-bs-toggle="tab" data-bs-target="#trust-config" type="button" role="tab">Trust Analyser Configuration</button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="tool-config-tab" data-bs-toggle="tab" data-bs-target="#trust-score-config" type="button" role="tab">Trust Score Configuration</button>
+            </li>
+        </ul>
+        <div class="tab-content" id="dashboardTabsContent">
+            <div class="tab-pane fade show active" id="requests" role="tabpanel">
+                <div class="d-flex justify-content-end mt-3 mb-2">
+                    <button class="btn btn-outline-primary btn-sm" onclick="manualRefresh()">Refresh</button>
+                </div>
+                <table class="table table-bordered mt-2">
+                    <thead>
+                        <tr>
+                            <th>Tool Name</th>
+                            <th>Timestamp</th>
+                            <th>Payload</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="data-table">
+                        <!-- Data will be inserted here -->
+                    </tbody>
+                </table>
+            </div>
+            <div class="tab-pane fade" id="trust-config" role="tabpanel">
+                <div class="mt-4">
+                    <h4>Step 1: Configure Impact Levels for Each Tool and Trust Evaluation Category</h4>
+                    <div id="trust-config-step1"></div>
+                    <button class="btn btn-success mt-3" id="saveTrustConfigBtn">Save Step 1 Configuration</button>
+                    <div id="trust-config-save-msg" class="mt-2"></div>
+                    <hr>
+                    <h4 class="mt-5">Step 2: Tool Behaviour Configuration</h4>
+                    <div id="trust-config-step2"></div>
+                    <button class="btn btn-primary mt-3" id="saveTrustConfigStep2Btn">Save Step 2 Configuration</button>
+                    <div id="trust-config-step2-msg" class="mt-2"></div>
+                    <hr>
+                    <h4 class="mt-5">Step 3: Category Behaviour Configuration</h4>
+                    <div id="trust-config-step3"></div>
+                    <button class="btn btn-warning mt-3" id="saveTrustConfigStep3Btn">Save Step 3 Configuration</button>
+                    <div id="trust-config-step3-msg" class="mt-2"></div>
+                    <hr>
+                    <h4 class="mt-5">Step 4: System Behaviour Configuration</h4>
+                    <div id="trust-config-step4"></div>
+                    <button class="btn btn-danger mt-3" id="saveTrustConfigStep4Btn">Save Step 4 Configuration</button>
+                    <div id="trust-config-step4-msg" class="mt-2"></div>
+                </div>
+            </div>
+            <div class="tab-pane fade" id="mapped" role="tabpanel">
+                <table class="table table-bordered mt-4">
+                    <thead>
+                        <tr>
+                            <th>Tool Name</th>
+                            <th>Description</th>
+                            <th>Data Type</th>
+                            <th>Trust Evaluation Category</th>
+                            <th>Unique ID Path</th>
+                            <th>Unique ID Value</th>
+                            <th>Value Path</th>
+                            <th>Categories</th>
+                            <th>Supplement Info</th>
+                            <th>Count</th>
+                        </tr>
+                    </thead>
+                    <tbody id="mapped-table">
+                        <!-- Mapped data will be inserted here -->
+                    </tbody>
+                </table>
+            </div>
+            <div class="tab-pane fade" id="trust-score-config" role="tabpanel">
+                <div class="mt-4">
+                    <h4>Trust Score Configuration</h4>
+                    <div id="trust-score-step5"></div>
+                    <button class="btn btn-info mt-3" id="saveTrustScoreStep5Btn">Save Trust Score Configuration</button>
+                    <button class="btn btn-warning mt-3 ms-2" id="simulateTrustBtn">Simulate Trust Analyser</button>
+                    <div id="trust-score-step5-msg" class="mt-2"></div>
+                    <div id="trust-simulation-result" class="mt-4"></div>
+                    <hr>
+                    <h4>Trust Score Calculation</h4>
+                    <div id="trust-score-config-weights"></div>
+                    <button class="btn btn-secondary mt-3" id="calcTrustScoreBtn">Calculate Trust Score</button>
+                    <div id="trust-score-result" class="mt-3"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        async function renderTrustConfigStep2() {
+            // Fetch mapped requests to get tool names
+            const [mappedResp, configResp] = await Promise.all([
+                fetch('/mapped'),
+                fetch('/trust-config-step2-get-all')
+            ]);
+            const mapped = await mappedResp.json();
+            const configs = await configResp.json();
+            // Build a lookup for (tool_name, category) => config
+            const configMap = {};
+            configs.forEach(cfg => {
+                const cat = (cfg.trust_evaluation_category || 'Uncategorized').trim().toLowerCase();
+                configMap[`${cfg.tool_name}|||${cat}`] = cfg;
+            });
+            // Group tools by category
+            const byCategory = {};
+            mapped.forEach(item => {
+                let cat = (item.trust_evaluation_category || 'Uncategorized').trim().toLowerCase();
+                if (!byCategory[cat]) byCategory[cat] = [];
+                byCategory[cat].push(item);
+            });
+            function capitalizeWords(str) {
+                return str.replace(/\b\w/g, c => c.toUpperCase());
+            }
+            let html = '';
+            Object.entries(byCategory).forEach(([cat, tools]) => {
+                html += `<h5 class="mt-4">Category: <b>${capitalizeWords(cat)}</b></h5>`;
+                html += '<div class="table-responsive"><table class="table table-bordered"><thead><tr><th>Tool Name</th><th>Override Active</th><th>Count</th><th>Impact</th><th>Behaviour</th></tr></thead><tbody>';
+                tools.forEach(tool => {
+                    const toolName = tool.tool_name;
+                    const cfg = configMap[`${toolName}|||${cat}`] || {};
+                    const countVal = cfg.override_count || '';
+                    const impactVal = cfg.override_impact || 'low';
+                    const behaviourVal = cfg.override_behaviour || 'normal';
+                    const overrideActive = cfg.override_active === 'true';
+                    html += `<tr><td>${toolName}</td>
+                        <td><input type="checkbox" name="${toolName}_${cat}_override_active" value="true" ${overrideActive ? 'checked' : ''}></td>
+                        <td><input type="number" min="1" class="form-control w-auto d-inline" name="${toolName}_${cat}_override_count" value="${countVal}"></td>
+                        <td><select class="form-select w-auto d-inline" name="${toolName}_${cat}_override_impact">
+                            <option value="low" ${impactVal==='low'?'selected':''}>Low</option>
+                            <option value="mid" ${impactVal==='mid'?'selected':''}>Mid</option>
+                            <option value="high" ${impactVal==='high'?'selected':''}>High</option>
+                        </select></td>
+                        <td><select class="form-select w-auto d-inline" name="${toolName}_${cat}_override_behaviour">
+                            <option value="normal" ${behaviourVal==='normal'?'selected':''}>Normal</option>
+                            <option value="unpredictable" ${behaviourVal==='unpredictable'?'selected':''}>Unpredictable</option>
+                            <option value="malicious" ${behaviourVal==='malicious'?'selected':''}>Malicious</option>
+                        </select></td></tr>`;
+                });
+                html += '</tbody></table></div>';
+            });
+            document.getElementById('trust-config-step2').innerHTML = html;
+        }
+        // Render step 2 on tab show
+        document.getElementById('trust-config-tab').addEventListener('shown.bs.tab', function() {
+            renderTrustConfigStep1();
+            renderTrustConfigStep2();
+            renderTrustConfigStep3();
+            renderTrustConfigStep4();
+        });
+        async function saveTrustConfigStep2() {
+            const container = document.getElementById('trust-config-step2');
+            const rows = container.querySelectorAll('tbody tr');
+            // Get mapped requests for tool_name/category to _id mapping
+            const mappedResp = await fetch('/mapped');
+            const mapped = await mappedResp.json();
+            const toolCatIdMap = {};
+            mapped.forEach(m => {
+                const cat = (m.trust_evaluation_category || 'Uncategorized').trim().toLowerCase();
+                toolCatIdMap[`${m.tool_name}|||${cat}`] = m._id;
+            });
+            let saveCount = 0;
+            let configsToSave = [];
+            rows.forEach(row => {
+                const toolName = row.querySelector('td').textContent;
+                let cat = row.closest('table').parentElement.previousSibling.textContent.replace('Category:','').trim().toLowerCase();
+                let overrideActive = row.querySelector(`input[name="${toolName}_${cat}_override_active"]`).checked ? 'true' : 'false';
+                if (overrideActive === 'true') {
+                    let config = { tool_name: toolName, trust_evaluation_category: cat };
+                    config.mapped_request_id = toolCatIdMap[`${toolName}|||${cat}`] || '';
+                    config.override_active = 'true';
+                    config.override_count = row.querySelector(`input[name="${toolName}_${cat}_override_count"]`).value;
+                    config.override_impact = row.querySelector(`select[name="${toolName}_${cat}_override_impact"]`).value;
+                    config.override_behaviour = row.querySelector(`select[name="${toolName}_${cat}_override_behaviour"]`).value;
+                    configsToSave.push(config);
+                } else {
+                    // Only save override_active false, no other details
+                    let config = { tool_name: toolName, trust_evaluation_category: cat, mapped_request_id: toolCatIdMap[`${toolName}|||${cat}`] || '', override_active: 'false' };
+                    configsToSave.push(config);
+                }
+            });
+            // Save all configs
+            let completed = 0;
+            configsToSave.forEach(async config => {
+                const resp = await fetch('/trust-config-step2', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(config)
+                });
+                completed++;
+                if (completed === configsToSave.length) {
+                    const msgDiv = document.getElementById('trust-config-step2-msg');
+                    if (resp.ok) {
+                        msgDiv.innerHTML = '<span class="text-success">Step 2 configuration saved!</span>';
+                    } else {
+                        msgDiv.innerHTML = '<span class="text-danger">Failed to save step 2 configuration.</span>';
+                    }
+                }
+            });
+        }
+        document.getElementById('trust-config').addEventListener('click', function(e) {
+            if (e.target && e.target.id === 'saveTrustConfigStep2Btn') {
+                saveTrustConfigStep2();
+            }
+        });
+        async function saveTrustConfig() {
+            const container = document.getElementById('trust-config-step1');
+            const rows = container.querySelectorAll('tbody tr');
+            let saveCount = 0;
+            // Get mapped requests for tool_name to _id mapping
+            const mappedResp = await fetch('/mapped');
+            const mappedRespJson = await mappedResp.json();
+            // Build a map for (tool_name, category) to mapped_request_id
+            const toolCatIdMap = {};
+            mappedRespJson.forEach(m => {
+                const cat = (m.trust_evaluation_category || 'Uncategorized').trim().toLowerCase();
+                toolCatIdMap[`${m.tool_name}|||${cat}`] = m._id;
+            });
+            rows.forEach(async row => {
+                const toolName = row.querySelector('td').textContent;
+                // Find category from parent table
+                let cat = row.closest('table').parentElement.previousSibling.textContent.replace('Category:','').trim().toLowerCase();
+                let config = { tool_name: toolName, trust_evaluation_category: cat };
+                // Add mapped_request_id
+                config.mapped_request_id = toolCatIdMap[`${toolName}|||${cat}`] || '';
+                // Collect all selects and ranges in this row
+                row.querySelectorAll('select').forEach(sel => {
+                    config[sel.name] = sel.value;
+                });
+                row.querySelectorAll('input[type=range]').forEach(rng => {
+                    config[rng.id] = rng.value;
+                });
+                // POST to backend
+                const resp = await fetch('/trust-config-step1', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(config)
+                });
+                saveCount++;
+                if (saveCount === rows.length) {
+                    const msgDiv = document.getElementById('trust-config-save-msg');
+                    if (resp.ok) {
+                        msgDiv.innerHTML = '<span class="text-success">Configuration saved!</span>';
+                    } else {
+                        msgDiv.innerHTML = '<span class="text-danger">Failed to save configuration.</span>';
+                    }
+                }
+            });
+        }
+        document.getElementById('trust-config').addEventListener('click', function(e) {
+            if (e.target && e.target.id === 'saveTrustConfigBtn') {
+                saveTrustConfig();
+            }
+        });
+        async function renderTrustConfigStep1() {
+            // Fetch mapped requests and step 1 configs
+            const [mappedResp, configResp] = await Promise.all([
+                fetch('/mapped'),
+                fetch('/trust-config-step1-get-all')
+            ]);
+            const mapped = await mappedResp.json();
+            const configs = await configResp.json();
+            // Build a lookup for (tool_name, category) => config
+            const configMap = {};
+            configs.forEach(cfg => {
+                const cat = (cfg.trust_evaluation_category || 'Uncategorized').trim().toLowerCase();
+                configMap[`${cfg.tool_name}|||${cat}`] = cfg;
+            });
+            // Group by trust_evaluation_category, then by tool_name
+            const byCategory = {};
+            mapped.forEach(item => {
+                const cat = (item.trust_evaluation_category || 'Uncategorized').trim().toLowerCase();
+                if (!byCategory[cat]) byCategory[cat] = [];
+                byCategory[cat].push(item);
+            });
+            let html = '';
+            Object.entries(byCategory).forEach(([cat, tools]) => {
+                html += `<h5 class="mt-4">Category: <b>${cat}</b></h5>`;
+                html += '<div class="table-responsive"><table class="table table-bordered"><thead><tr><th>Tool Name</th><th>Data Type</th><th>Configuration</th></tr></thead><tbody>';
+                tools.forEach(tool => {
+                    const toolName = tool.tool_name;
+                    const cfg = configMap[`${toolName}|||${cat}`] || {};
+                    html += `<tr><td>${toolName}</td><td>${tool.data_type}</td><td>`;
+                    if (tool.data_type === 'binary') {
+                        const onVal = cfg[`${toolName}_${cat}_on`] || 'Low';
+                        const offVal = cfg[`${toolName}_${cat}_off`] || 'Low';
+                        html += `<div>On: <select class="form-select d-inline w-auto" name="${toolName}_${cat}_on"><option${onVal==='Low'?' selected':''}>Low</option><option${onVal==='Mid'?' selected':''}>Mid</option><option${onVal==='High'?' selected':''}>High</option></select> &nbsp; Off: <select class="form-select d-inline w-auto" name="${toolName}_${cat}_off"><option${offVal==='Low'?' selected':''}>Low</option><option${offVal==='Mid'?' selected':''}>Mid</option><option${offVal==='High'?' selected':''}>High</option></select></div>`;
+                    } else if (tool.data_type === 'categorical') {
+                        const cats = (tool.categories||'').split(',').map(x=>x.trim()).filter(Boolean);
+                        cats.forEach(c => {
+                            const catVal = cfg[`${toolName}_${cat}_${c}`] || 'Low';
+                            html += `<div>${c}: <select class="form-select d-inline w-auto" name="${toolName}_${cat}_${c}"><option${catVal==='Low'?' selected':''}>Low</option><option${catVal==='Mid'?' selected':''}>Mid</option><option${catVal==='High'?' selected':''}>High</option></select></div>`;
+                        });
+                    } else if (tool.data_type === 'continuous') {
+                        const min = tool.min_value !== undefined ? tool.min_value : 0;
+                        const max = tool.max_value !== undefined ? tool.max_value : 100;
+                        const sliderId1 = `${toolName}_${cat}_slider_lower`;
+                        const sliderId2 = `${toolName}_${cat}_slider_upper`;
+                        const impactDivId = `${toolName}_${cat}_impact_ranges`;
+                        const lowerVal = cfg[sliderId1] || min;
+                        const upperVal = cfg[sliderId2] || max;
+                        html += `<div>Min: <b>${min}</b> &nbsp; Max: <b>${max}</b></div>`;
+                        html += `<div class="mb-2">Lower Bound: <input type="range" min="${min}" max="${max}" value="${lowerVal}" id="${sliderId1}" style="width:150px;"> <span id="${sliderId1}_val">${lowerVal}</span></div>`;
+                        html += `<div class="mb-2">Upper Bound: <input type="range" min="${min}" max="${max}" value="${upperVal}" id="${sliderId2}" style="width:150px;"> <span id="${sliderId2}_val">${upperVal}</span></div>`;
+                        html += `<div class="mb-2" id="${impactDivId}"></div>`;
+                        setTimeout(() => {
+                            var lower = document.getElementById(sliderId1);
+                            var upper = document.getElementById(sliderId2);
+                            var lowerValSpan = document.getElementById(sliderId1 + '_val');
+                            var upperValSpan = document.getElementById(sliderId2 + '_val');
+                            var impactDiv = document.getElementById(impactDivId);
+                            function update() {
+                                var l = parseFloat(lower.value);
+                                var u = parseFloat(upper.value);
+                                if (l > u) { var t = l; l = u; u = t; }
+                                lowerValSpan.textContent = l;
+                                upperValSpan.textContent = u;
+                                impactDiv.innerHTML = '<b>Impact Ranges:</b><br>Low: ' + min + ' to ' + l + '<br>Mid: ' + (l+1) + ' to ' + u + '<br>High: Above ' + u;
+                            }
+                            lower.addEventListener('input', update);
+                            upper.addEventListener('input', update);
+                            update();
+                        }, 0);
+                    }
+                    html += `</td></tr>`;
+                });
+                html += '</tbody></table></div>';
+            });
+            document.getElementById('trust-config-step1').innerHTML = html;
+        }
+        // Render on tab show
+        document.getElementById('trust-config-tab').addEventListener('shown.bs.tab', renderTrustConfigStep1);
+        let mappedList = [];
+        async function fetchMapped() {
+            const response = await fetch('/mapped');
+            const data = await response.json();
+            mappedList = data;
+            const table = document.getElementById('mapped-table');
+            table.innerHTML = '';
+            data.forEach(item => {
+                const row = `<tr>
+                    <td>${item.tool_name}</td>
+                    <td>${item.description || ''}</td>
+                    <td>${item.data_type}</td>
+                    <td>${item.trust_evaluation_category || ''}</td>
+                    <td>${item.unique_id_path}</td>
+                    <td>${item.unique_id_value || ''}</td>
+                    <td>${item.value_path}</td>
+                    <td>${item.categories || ''}</td>
+                    <td>${item.supplement || ''}</td>
+                    <td>${item.count || 0}</td>
+                </tr>`;
+                table.innerHTML += row;
+            });
+        }
+        function getByPath(payload, path) {
+            try {
+                const parts = path.split('.').slice(1); // remove 'payload'
+                let val = payload;
+                for (const p of parts) {
+                    if (typeof val === 'object' && val !== null) {
+                        val = val[p];
+                    } else {
+                        return undefined;
+                    }
+                }
+                return val;
+            } catch { return undefined; }
+        }
+        async function fetchData() {
+            const response = await fetch('/data');
+            const data = await response.json();
+            const table = document.getElementById('data-table');
+            table.innerHTML = '';
+            // Remove requests that match both unique_id_path and unique_id_value
+            const filtered = data.filter(item => {
+                for (const m of mappedList) {
+                    if (m.unique_id_path && m.unique_id_value !== undefined) {
+                        const val = getByPath(item.payload, m.unique_id_path);
+                        if (val !== undefined && String(val) === String(m.unique_id_value)) {
+                            return false;
+                        }
+                    }
+                }
+                return true;
+            });
+            filtered.forEach((item, idx) => {
+                const payloadId = `payload-${idx}`;
+                const row = `<tr>
+                    <td>${item.tool_name}</td>
+                    <td>${item.time_stamp}</td>
+                    <td>
+                        <button class="btn btn-sm btn-secondary" onclick="toggleJson('${payloadId}')">Toggle</button>
+                        <pre id="${payloadId}" class="json-collapsed">${JSON.stringify(item.payload, null, 2)}</pre>
+                    </td>
+                    <td><button class="btn btn-primary btn-sm" onclick='openMapWindow(${JSON.stringify(item)})'>Map</button></td>
+                </tr>`;
+                table.innerHTML += row;
+            });
+        }
+        function manualRefresh() {
+            fetchMapped().then(fetchData);
+        }
+        function toggleJson(id) {
+            const el = document.getElementById(id);
+            if (el.classList.contains('json-collapsed')) {
+                el.classList.remove('json-collapsed');
+                el.classList.add('json-expanded');
+            } else {
+                el.classList.remove('json-expanded');
+                el.classList.add('json-collapsed');
+            }
+        }
+        function openMapWindow(item) {
+            const win = window.open('', '_blank', 'width=900,height=700');
+            win.document.write('<!DOCTYPE html><html><head><title>Map Payload</title><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css"><style>.json-tree{font-family:monospace;font-size:0.95em;}.json-key{color:#007bff;cursor:pointer;}.json-leaf{color:#333;cursor:pointer;}.json-branch{margin-left:1em;}</style></head><body>');
+            win.document.write('<div class="container mt-4"><h2>Map Payload</h2>');
+            win.document.write('<form id="mapForm">');
+            win.document.write(`<div class="mb-2"><label>Tool Name</label><input class="form-control" name="tool_name" value="${item.tool_name}" required></div>`);
+            win.document.write('<div class="mb-2"><label>Description</label><input class="form-control" name="description"></div>');
+            win.document.write('<div class="mb-2"><label>Trust Evaluation Category</label><select class="form-control" name="trust_evaluation_category" required><option value="">Select...</option><option value="Security">Security</option><option value="Reliability">Reliability</option><option value="Resilience">Resilience</option><option value="Dependability & Uncertainty">Dependability & Uncertainty</option><option value="Goal Analysis">Goal Analysis</option></select></div>');
+            win.document.write('<div class="mb-2"><label>Data Type</label><select class="form-control" name="data_type" id="dataTypeSelect"><option value="binary">Binary</option><option value="categorical">Categorical</option><option value="continuous">Continuous</option></select></div>');
+            win.document.write('<div class="mb-2" id="categoriesDiv" style="display:none;"><label>Categories (comma separated)</label><input class="form-control" name="categories"></div>');
+            win.document.write('<div class="mb-2" id="continuousDiv" style="display:none;">' +
+                '<label>Min Value</label><input class="form-control mb-1" name="min_value" id="minValueBox" type="number" step="any" disabled>' +
+                '<label>Max Value</label><input class="form-control" name="max_value" id="maxValueBox" type="number" step="any" disabled>' +
+            '</div>');
+            win.document.write('<div class="mb-2"><label>Unique ID Path</label><input class="form-control" name="unique_id_path" id="uniqueIdPath" placeholder="e.g. payload.id"></div>');
+            win.document.write('<div class="mb-2"><label>Unique ID Value</label><input class="form-control" name="unique_id_value" id="uniqueIdValue" readonly></div>');
+            win.document.write('<div class="mb-2"><label>Value Path</label><input class="form-control" name="value_path" id="valuePath" placeholder="e.g. payload.value"></div>');
+            win.document.write('<div class="mb-2"><label>Supplement Info Path</label><input class="form-control" name="supplement" id="supplementPath" placeholder="e.g. payload.location"></div>');
+            win.document.write('<div class="mb-2"><label>Payload (click a field to select its path):</label><div id="jsonTree" class="json-tree"></div></div>');
+            win.document.write('<button type="submit" class="btn btn-success">Save Mapping</button>');
+            win.document.write('</form></div>');
+            win.document.write(`<script>
+                var dataTypeSelect = document.getElementById('dataTypeSelect');
+                var categoriesDiv = document.getElementById('categoriesDiv');
+                var continuousDiv = document.getElementById('continuousDiv');
+                var minValueBox = document.getElementById('minValueBox');
+                var maxValueBox = document.getElementById('maxValueBox');
+                function updateTypeDisplays() {
+                    categoriesDiv.style.display = dataTypeSelect.value === 'categorical' ? 'block' : 'none';
+                    if (dataTypeSelect.value === 'continuous') {
+                        continuousDiv.style.display = 'block';
+                        minValueBox.disabled = false;
+                        maxValueBox.disabled = false;
+                    } else {
+                        continuousDiv.style.display = 'none';
+                        minValueBox.disabled = true;
+                        maxValueBox.disabled = true;
+                        minValueBox.value = '';
+                        maxValueBox.value = '';
+                    }
+                }
+                dataTypeSelect.addEventListener('change', updateTypeDisplays);
+                // Set initial state
+                updateTypeDisplays();
+            <\/script>`);
+            win.document.write(`<script>
+                function renderTree(obj, path) {
+                    let html = '<ul style="list-style:none;padding-left:1em;">';
+                    for (const key in obj) {
+                        const newPath = path ? path + '.' + key : key;
+                        if (typeof obj[key] === 'object' && obj[key] !== null) {
+                            html += \`<li><span class='json-key' onclick="selectPath('\${newPath}')">\${key}</span>: <span class='json-branch'>\` + renderTree(obj[key], newPath) + '</span></li>';
+                        } else {
+                            html += \`<li><span class='json-key' onclick="selectPath('\${newPath}')">\${key}</span>: <span class='json-leaf' onclick="selectPath('\${newPath}')">\${obj[key]}</span></li>\`;
+                        }
+                    }
+                    html += '</ul>';
+                    return html;
+                }
+                function getByPath(obj, path) {
+                    try {
+                        const parts = path.split('.').slice(1); // remove 'payload'
+                        let val = obj;
+                        for (const p of parts) {
+                            if (typeof val === 'object' && val !== null) {
+                                val = val[p];
+                            } else {
+                                return undefined;
+                            }
+                        }
+                        return val;
+                    } catch { return undefined; }
+                }
+                function selectPath(path) {
+                    const field = window.selectedField || 'uniqueIdPath';
+                    document.getElementById(field).value = path;
+                    if(field === 'uniqueIdPath') {
+                        // Set the unique id value automatically
+                        const val = getByPath(${JSON.stringify(item.payload)}, path);
+                        document.getElementById('uniqueIdValue').value = val !== undefined ? val : '';
+                    }
+                }
+                window.selectedField = 'uniqueIdPath';
+                document.getElementById('uniqueIdPath').onclick = function() { window.selectedField = 'uniqueIdPath'; };
+                document.getElementById('valuePath').onclick = function() { window.selectedField = 'valuePath'; };
+                document.getElementById('supplementPath').onclick = function() { window.selectedField = 'supplementPath'; };
+                document.getElementById('jsonTree').innerHTML = renderTree(${JSON.stringify(item.payload)}, 'payload');
+                // Set initial unique id value if path is prefilled
+                document.getElementById('uniqueIdPath').addEventListener('input', function() {
+                    const val = getByPath(${JSON.stringify(item.payload)}, this.value);
+                    document.getElementById('uniqueIdValue').value = val !== undefined ? val : '';
+                });
+            <\/script>`);
+            win.document.write('<script>document.getElementById("mapForm").onsubmit = async function(e) {e.preventDefault();const form = e.target;const data = Object.fromEntries(new FormData(form));await fetch("/map", {method: "POST",headers: {"Content-Type": "application/json"},body: JSON.stringify(data)});if(window.opener && window.opener.switchToMappedTab){window.opener.switchToMappedTab();}window.close();};<\/script>');
+            win.document.write('</body></html>');
+        }
+        function switchToMappedTab() {
+            var mappedTab = document.getElementById('mapped-tab');
+            if (mappedTab) {
+                var tab = new bootstrap.Tab(mappedTab);
+                tab.show();
+            }
+            fetchMapped();
+            fetchData();
+        }
+        async function renderTrustConfigStep3() {
+            // Fetch mapped requests and step 3 configs
+            const [mappedResp, configResp] = await Promise.all([
+                fetch('/mapped'),
+                fetch('/trust-config-step3-get-all')
+            ]);
+            const mapped = await mappedResp.json();
+            const configs = await configResp.json();
+            // Build a lookup for category => config
+            const configMap = {};
+            configs.forEach(cfg => {
+                const cat = (cfg.trust_evaluation_category || 'Uncategorized').trim().toLowerCase();
+                configMap[cat] = cfg;
+            });
+            // Group tools by category
+            const byCategory = {};
+            mapped.forEach(item => {
+                let cat = (item.trust_evaluation_category || 'Uncategorized').trim().toLowerCase();
+                if (!byCategory[cat]) byCategory[cat] = [];
+                byCategory[cat].push(item);
+            });
+            function capitalizeWords(str) {
+                return str.replace(/\b\w/g, c => c.toUpperCase());
+            }
+            let html = '<h4 class="mt-5">Step 3: Category Behaviour Configuration</h4>';
+            Object.entries(byCategory).forEach(([cat, tools]) => {
+                const cfg = configMap[cat] || {};
+                const overrideActive = cfg.override_active === 'true';
+                const overrideCount = cfg.override_count || '';
+                const overrideBehaviour = cfg.override_behaviour || 'normal';
+                const oneToolBehaviour = cfg.one_tool_behaviour || 'normal';
+                const finalBehaviour = cfg.final_behaviour || 'normal';
+                html += `<div class="mb-4 p-3 border rounded">
+                    <h5>Category: <b>${capitalizeWords(cat)}</b></h5>
+                    <div>Number of tools registered: <b>${tools.length}</b></div>
+                    <div>Default: Majority behaviour for this category will be selected.<br>
+                        <span class="text-secondary">Majority Low = Normal, Majority Mid = Unpredictable, Majority High = Malicious</span>
+                    </div>
+                    <div class="mt-2">Override rule:
+                        <label class="form-check-label ms-2">
+                            <input type="checkbox" class="form-check-input" name="${cat}_override_active" value="true" ${overrideActive ? 'checked' : ''}> Activate Override
+                        </label><br>
+                        <input type="number" min="1" class="form-control d-inline w-auto" style="width:80px;" name="${cat}_override_count" placeholder="Number of tools" value="${overrideCount}">
+                        <select class="form-select w-auto d-inline" name="${cat}_override_behaviour">
+                            <option value="normal" ${overrideBehaviour==='normal'?'selected':''}>Normal</option>
+                            <option value="unpredictable" ${overrideBehaviour==='unpredictable'?'selected':''}>Unpredictable</option>
+                            <option value="malicious" ${overrideBehaviour==='malicious'?'selected':''}>Malicious</option>
+                        </select>
+                        <span class="text-secondary ms-2">(If at least <b>number of tools</b> then <b>behaviour</b>)</span>
+                    </div>
+                    <div class="mt-2">If at least one tool with this behaviour:
+                        <select class="form-select w-auto d-inline" name="${cat}_one_tool_behaviour">
+                            <option value="normal" ${oneToolBehaviour==='normal'?'selected':''}>Normal</option>
+                            <option value="unpredictable" ${oneToolBehaviour==='unpredictable'?'selected':''}>Unpredictable</option>
+                            <option value="malicious" ${oneToolBehaviour==='malicious'?'selected':''}>Malicious</option>
+                        </select>
+                        <span class="text-secondary ms-2">(Result in this behaviour)</span>
+                    </div>
+                    <div class="mt-2">Final Behaviour Categorisation: <b>${capitalizeWords(finalBehaviour)}</b></div>
+                </div>`;
+            });
+            document.getElementById('trust-config-step3').innerHTML = html;
+        }
+        // Render step 3 on tab show
+        document.getElementById('trust-config-tab').addEventListener('shown.bs.tab', function() {
+            renderTrustConfigStep3();
+        });
+        async function saveTrustConfigStep3() {
+            const container = document.getElementById('trust-config-step3');
+            const blocks = container.querySelectorAll('.mb-4.p-3.border.rounded');
+            let configsToSave = [];
+            blocks.forEach(block => {
+                const cat = block.querySelector('h5 b').textContent.trim().toLowerCase();
+                const overrideActive = block.querySelector(`input[name="${cat}_override_active"]`).checked ? 'true' : 'false';
+                const overrideCount = block.querySelector(`input[name="${cat}_override_count"]`).value;
+                const overrideBehaviour = block.querySelector(`select[name="${cat}_override_behaviour"]`).value;
+                const oneToolBehaviour = block.querySelector(`select[name="${cat}_one_tool_behaviour"]`).value;
+                let config = {
+                    trust_evaluation_category: cat,
+                    override_active: overrideActive,
+                    override_count: overrideActive === 'true' ? overrideCount : '',
+                    override_behaviour: overrideActive === 'true' ? overrideBehaviour : 'normal',
+                    one_tool_behaviour: oneToolBehaviour,
+                    final_behaviour: block.querySelector('div.mt-2 b').textContent.trim().toLowerCase()
+                };
+                configsToSave.push(config);
+            });
+            let completed = 0;
+            configsToSave.forEach(async config => {
+                const resp = await fetch('/trust-config-step3', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(config)
+                });
+                completed++;
+                if (completed === configsToSave.length) {
+                    const msgDiv = document.getElementById('trust-config-step3-msg');
+                    if (resp.ok) {
+                        msgDiv.innerHTML = '<span class="text-success">Step 3 configuration saved!</span>';
+                    } else {
+                        msgDiv.innerHTML = '<span class="text-danger">Failed to save step 3 configuration.</span>';
+                    }
+                }
+            });
+        }
+        document.getElementById('trust-config').addEventListener('click', function(e) {
+            if (e.target && e.target.id === 'saveTrustConfigStep3Btn') {
+                saveTrustConfigStep3();
+            }
+        });
+        async function renderTrustConfigStep4() {
+            // Fetch step 4 config
+            const resp = await fetch('/trust-config-step4-get');
+            const cfg = await resp.json();
+            const overrideActive = cfg.override_active === 'true';
+            const overrideCount = cfg.override_count || '';
+            const overrideBehaviour = cfg.override_behaviour || 'normal';
+            const finalBehaviour = cfg.final_behaviour || 'normal';
+            let html = '<h4 class="mt-5">Step 4: System Behaviour Configuration</h4>';
+            html += `<div class="mb-4 p-3 border rounded">
+        <div>Default: Majority of category behaviour will determine system behaviour.</div>
+        <div class="mt-2">Override rule:
+            <label class="form-check-label ms-2">
+                <input type="checkbox" class="form-check-input" name="system_override_active" value="true" ${overrideActive ? 'checked' : ''}> Activate Override
+            </label><br>
+            <input type="number" min="1" class="form-control d-inline w-auto" style="width:80px;" name="system_override_count" placeholder="Number of categories" value="${overrideCount}">
+            <select class="form-select w-auto d-inline" name="system_override_behaviour">
+                <option value="normal" ${overrideBehaviour==='normal'?'selected':''}>Normal</option>
+                <option value="unpredictable" ${overrideBehaviour==='unpredictable'?'selected':''}>Unpredictable</option>
+                <option value="malicious" ${overrideBehaviour==='malicious'?'selected':''}>Malicious</option>
+            </select>
+            <span class="text-secondary ms-2">(If at least <b>number of categories</b> then <b>behaviour</b>)</span>
+        </div>
+        <div class="mt-2">Final System Behaviour: <select class="form-select w-auto d-inline" name="system_final_behaviour">
+            <option value="normal" ${finalBehaviour==='normal'?'selected':''}>Normal</option>
+            <option value="unpredictable" ${finalBehaviour==='unpredictable'?'selected':''}>Unpredictable</option>
+            <option value="malicious" ${finalBehaviour==='malicious'?'selected':''}>Malicious</option>
+        </select></div>
+    </div>`;
+            document.getElementById('trust-config-step4').innerHTML = html;
+        }
+        // Render step 4 on tab show
+        document.getElementById('trust-config-tab').addEventListener('shown.bs.tab', function() {
+            renderTrustConfigStep4();
+        });
+        async function saveTrustConfigStep4() {
+            const container = document.getElementById('trust-config-step4');
+            const block = container.querySelector('.mb-4.p-3.border.rounded');
+            const overrideActive = block.querySelector('input[name="system_override_active"]').checked ? 'true' : 'false';
+            const overrideCount = block.querySelector('input[name="system_override_count"]').value;
+            const overrideBehaviour = block.querySelector('select[name="system_override_behaviour"]').value;
+            const finalBehaviour = block.querySelector('select[name="system_final_behaviour"]').value;
+            let config = {
+                override_active: overrideActive,
+                override_count: overrideActive === 'true' ? overrideCount : '',
+                override_behaviour: overrideActive === 'true' ? overrideBehaviour : 'normal',
+                final_behaviour: finalBehaviour
+            };
+            const resp = await fetch('/trust-config-step4', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(config)
+            });
+            const msgDiv = document.getElementById('trust-config-step4-msg');
+            if (resp.ok) {
+                msgDiv.innerHTML = '<span class="text-success">Step 4 configuration saved!</span>';
+            } else {
+                msgDiv.innerHTML = '<span class="text-danger">Failed to save step 4 configuration.</span>';
+            }
+        }
+        document.getElementById('trust-config').addEventListener('click', function(e) {
+            if (e.target && e.target.id === 'saveTrustConfigStep4Btn') {
+                saveTrustConfigStep4();
+            }
+        });
+        async function renderToolConfigStep5() {
+            // Fetch mapped requests and step 5 configs
+            const [mappedResp, configResp] = await Promise.all([
+                fetch('/mapped'),
+                fetch('/tool-config-step5-get')
+            ]);
+            const mapped = await mappedResp.json();
+            const configs = await configResp.json();
+            // Build a lookup for (tool_name, category) => config
+            const configMap = {};
+            configs.forEach(cfg => {
+                const cat = (cfg.trust_evaluation_category || 'Uncategorized').trim().toLowerCase();
+                configMap[`${cfg.tool_name}|||${cat}`] = cfg;
+            });
+            // Group by trust_evaluation_category, then by tool_name
+            const byCategory = {};
+            mapped.forEach(item => {
+                const cat = (item.trust_evaluation_category || 'Uncategorized').trim().toLowerCase();
+                if (!byCategory[cat]) byCategory[cat] = [];
+                byCategory[cat].push(item);
+            });
+            let html = '';
+            Object.entries(byCategory).forEach(([cat, tools]) => {
+                html += `<h5 class="mt-4">Category: <b>${cat}</b></h5>`;
+                html += '<div class="table-responsive"><table class="table table-bordered"><thead><tr><th>Tool Name</th><th>Data Type</th><th>Value</th><th>Count</th></tr></thead><tbody>';
+                tools.forEach(tool => {
+                    const toolName = tool.tool_name;
+                    const cfg = configMap[`${toolName}|||${cat}`] || {};
+                    html += `<tr><td>${toolName}</td><td>${tool.data_type}</td><td>`;
+                    if (tool.data_type === 'binary') {
+                        const val = cfg.value || 'true';
+                        html += `<select class="form-select w-auto d-inline" name="${toolName}_${cat}_value">
+                    <option value="true" ${val==='true'?'selected':''}>True</option>
+                    <option value="false" ${val==='false'?'selected':''}>False</option>
+                </select>`;
+                    } else if (tool.data_type === 'categorical') {
+                        const cats = (tool.categories||'').split(',').map(x=>x.trim()).filter(Boolean);
+                        const val = cfg.value || (cats.length ? cats[0] : '');
+                        html += `<select class="form-select w-auto d-inline" name="${toolName}_${cat}_value">`;
+                        cats.forEach(c => {
+                            html += `<option value="${c}" ${val===c?'selected':''}>${c}</option>`;
+                        });
+                        html += `</select>`;
+                    } else if (tool.data_type === 'continuous') {
+                        const min = tool.min_value !== undefined ? tool.min_value : 0;
+                        const max = tool.max_value !== undefined ? tool.max_value : 100;
+                        const val = cfg.value !== undefined ? cfg.value : min;
+                        html += `<div style="display:flex;align-items:center;gap:10px;">
+                    <span>Min: <b>${min}</b></span>
+                    <input type="range" min="${min}" max="${max}" value="${val}" name="${toolName}_${cat}_value" style="width:150px;" oninput="this.nextElementSibling.textContent=this.value">
+                    <span>${val}</span>
+                    <span>Max: <b>${max}</b></span>
+                </div>`;
+                    }
+                    // Add count textbox
+                    const countVal = cfg.count !== undefined ? cfg.count : 1;
+                    html += `</td><td><input type="number" min="1" value="${countVal}" name="${toolName}_${cat}_count" class="form-control w-auto d-inline"></td></tr>`;
+                });
+                html += '</tbody></table></div>';
+            });
+            document.getElementById('trust-score-step5').innerHTML = html;
+        }
+
+        document.getElementById('tool-config-tab').addEventListener('shown.bs.tab', function() {
+            renderToolConfigStep5();
+        });
+
+        async function saveToolConfigStep5() {
+            const container = document.getElementById('tool-config-step5');
+            const rows = container.querySelectorAll('tbody tr');
+            let configsToSave = [];
+            rows.forEach(row => {
+                const toolName = row.querySelector('td').textContent;
+                let cat = row.closest('table').parentElement.previousSibling.textContent.replace('Category:','').trim().toLowerCase();
+                let valueInput = row.querySelector(`[name="${toolName}_${cat}_value"]`);
+                let value = valueInput.value;
+                configsToSave.push({ tool_name: toolName, trust_evaluation_category: cat, value });
+            });
+            let completed = 0;
+            for (const config of configsToSave) {
+                const resp = await fetch('/tool-config-step5', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(config)
+                });
+                completed++;
+                if (completed === configsToSave.length) {
+                    const msgDiv = document.getElementById('trust-score-step5-msg');
+                    if (resp.ok) {
+                        msgDiv.innerHTML = '<span class="text-success">Step 5 configuration saved!</span>';
+                    } else {
+                        msgDiv.innerHTML = '<span class="text-danger">Failed to save step 5 configuration.</span>';
+                    }
+                }
+            }
+        }
+        document.getElementById('trust-score-config').addEventListener('click', function(e) {
+            if (e.target && e.target.id === 'saveTrustScoreStep5Btn') {
+                saveToolConfigStep5();
+            }
+        });
+        async function simulateTrustAnalyser() {
+            // Always fetch all configs fresh
+            const [mappedResp, step1Resp, step2Resp, step3Resp, step4Resp] = await Promise.all([
+                fetch('/mapped'),
+                fetch('/trust-config-step1-get-all'),
+                fetch('/trust-config-step2-get-all'),
+                fetch('/trust-config-step3-get-all'),
+                fetch('/trust-config-step4-get')
+            ]);
+            const mapped = await mappedResp.json();
+            const step1 = await step1Resp.json();
+            const step2 = await step2Resp.json();
+            const step3 = await step3Resp.json();
+            const step4 = await step4Resp.json();
+            // Get tool values and counts from UI
+            const toolInputs = {};
+            const rows = document.querySelectorAll('#trust-score-step5 tbody tr');
+            rows.forEach(row => {
+                const toolName = row.querySelector('td').textContent;
+                let cat = row.closest('table').parentElement.previousSibling.textContent.replace('Category:','').trim().toLowerCase();
+                let valueInput = row.querySelector(`[name="${toolName}_${cat}_value"]`);
+                let countInput = row.querySelector(`[name="${toolName}_${cat}_count"]`);
+                let value = valueInput.value;
+                let count = parseInt(countInput.value) || 1;
+                toolInputs[`${toolName}|||${cat}`] = { value, count };
+            });
+            // Build lookup maps
+            const step1Map = {};
+            step1.forEach(cfg => {
+                const cat = (cfg.trust_evaluation_category || 'Uncategorized').trim().toLowerCase();
+                step1Map[`${cfg.tool_name}|||${cat}`] = cfg;
+            });
+            const step2Map = {};
+            step2.forEach(cfg => {
+                const cat = (cfg.trust_evaluation_category || 'Uncategorized').trim().toLowerCase();
+                step2Map[`${cfg.tool_name}|||${cat}`] = cfg;
+            });
+            const step3Map = {};
+            step3.forEach(cfg => {
+                const cat = (cfg.trust_evaluation_category || 'Uncategorized').trim().toLowerCase();
+                step3Map[cat] = cfg;
+            });
+            // 1. Tool Impact Categorisation (consider count and override)
+            let toolImpacts = {};
+            mapped.forEach(tool => {
+                const toolName = tool.tool_name;
+                const cat = (tool.trust_evaluation_category || 'Uncategorized').trim().toLowerCase();
+                const key = `${toolName}|||${cat}`;
+                const step1Cfg = step1Map[key] || {};
+                const step2Cfg = step2Map[key] || {};
+                const input = toolInputs[key] || { value: '', count: 1 };
+                let impact = 'Low';
+                // If override rule in step 2 and count >= override_count, apply override impact
+                if (step2Cfg.override_active === 'true' && input.count >= parseInt(step2Cfg.override_count || '0')) {
+                    impact = step2Cfg.override_impact || 'Low';
+                } else {
+                    if (tool.data_type === 'binary') {
+                        impact = input.value === 'true' ? (step1Cfg[`${toolName}_${cat}_on`] || 'Low') : (step1Cfg[`${toolName}_${cat}_off`] || 'Low');
+                    } else if (tool.data_type === 'categorical') {
+                        impact = step1Cfg[`${toolName}_${cat}_${input.value}`] || 'Low';
+                    } else if (tool.data_type === 'continuous') {
+                        const val = parseFloat(input.value || tool.min_value || 0);
+                        const lower = parseFloat(step1Cfg[`${toolName}_${cat}_slider_lower`] || tool.min_value || 0);
+                        const upper = parseFloat(step1Cfg[`${toolName}_${cat}_slider_upper`] || tool.max_value || 100);
+                        if (val <= lower) impact = 'Low';
+                        else if (val <= upper) impact = 'Mid';
+                        else impact = 'High';
+                    }
+                }
+                toolImpacts[key] = impact;
+            });
+            // 2. Tool Behaviour (consider count and override)
+            let toolBehaviours = {};
+            mapped.forEach(tool => {
+                const toolName = tool.tool_name;
+                const cat = (tool.trust_evaluation_category || 'Uncategorized').trim().toLowerCase();
+                const key = `${toolName}|||${cat}`;
+                const step2Cfg = step2Map[key] || {};
+                const input = toolInputs[key] || { value: '', count: 1 };
+                let behaviour = 'normal';
+                if (step2Cfg.override_active === 'true' && input.count >= parseInt(step2Cfg.override_count || '0')) {
+                    behaviour = step2Cfg.override_behaviour || 'normal';
+                } else {
+                    const impact = toolImpacts[key];
+                    if (impact === 'Low') behaviour = 'normal';
+                    else if (impact === 'Mid') behaviour = 'unpredictable';
+                    else behaviour = 'malicious';
+                }
+                toolBehaviours[key] = behaviour;
+            });
+            // 3. Category Behaviour
+            let categoryBehaviours = {};
+            const byCategory = {};
+            mapped.forEach(tool => {
+                const cat = (tool.trust_evaluation_category || 'Uncategorized').trim().toLowerCase();
+                if (!byCategory[cat]) byCategory[cat] = [];
+                byCategory[cat].push(tool);
+            });
+            Object.entries(byCategory).forEach(([cat, tools]) => {
+                const step3Cfg = step3Map[cat] || {};
+                let behaviours = tools.map(tool => toolBehaviours[`${tool.tool_name}|||${cat}`]);
+                let finalCatBehaviour = 'normal';
+                if (step3Cfg.override_active === 'true') {
+                    const count = parseInt(step3Cfg.override_count || '0');
+                    const target = step3Cfg.override_behaviour || 'normal';
+                    const num = behaviours.filter(b => b === target).length;
+                    if (num >= count) finalCatBehaviour = target;
+                } else {
+                    const counts = {normal:0,unpredictable:0,malicious:0};
+                    behaviours.forEach(b => {counts[b] = (counts[b]||0)+1;});
+                    let max = 'normal';
+                    if (counts.malicious > counts.normal && counts.malicious > counts.unpredictable) max = 'malicious';
+                    else if (counts.unpredictable > counts.normal && counts.unpredictable > counts.malicious) max = 'unpredictable';
+                    finalCatBehaviour = max;
+                }
+                if (step3Cfg.one_tool_behaviour) {
+                    if (behaviours.includes(step3Cfg.one_tool_behaviour)) finalCatBehaviour = step3Cfg.one_tool_behaviour;
+                }
+                categoryBehaviours[cat] = finalCatBehaviour;
+            });
+            // 4. System Behaviour (step 4)
+            let systemBehaviour = 'normal';
+            const step4Cfg = step4 || {};
+            const catBehaviours = Object.values(categoryBehaviours);
+            if (step4Cfg.override_active === 'true') {
+                const count = parseInt(step4Cfg.override_count || '0');
+                const target = step4Cfg.override_behaviour || 'normal';
+                const num = catBehaviours.filter(b => b === target).length;
+                if (num >= count) systemBehaviour = target;
+            } else {
+                const counts = {normal:0,unpredictable:0,malicious:0};
+                catBehaviours.forEach(b => {counts[b] = (counts[b]||0)+1;});
+                let max = 'normal';
+                if (counts.malicious > counts.normal && counts.malicious > counts.unpredictable) max = 'malicious';
+                else if (counts.unpredictable > counts.normal && counts.unpredictable > counts.malicious) max = 'unpredictable';
+                systemBehaviour = max;
+            }
+            // Show results
+            let html = '<h5>Simulation Results</h5>';
+            html += '<b>Tool Impact Categorisation:</b><ul>';
+            Object.entries(toolImpacts).forEach(([key, impact]) => {
+                html += `<li>${key}: <b>${impact}</b></li>`;
+            });
+            html += '</ul><b>Tool Behaviour:</b><ul>';
+            Object.entries(toolBehaviours).forEach(([key, behaviour]) => {
+                html += `<li>${key}: <b>${behaviour}</b></li>`;
+            });
+            html += '</ul><b>Category Behaviour:</b><ul>';
+            Object.entries(categoryBehaviours).forEach(([cat, behaviour]) => {
+                html += `<li>${cat}: <b>${behaviour}</b></li>`;
+            });
+            html += `</ul><b>System Behaviour (Step 4):</b> <span class="badge bg-${systemBehaviour==='normal'?'success':systemBehaviour==='unpredictable'?'warning':'danger'}">${systemBehaviour.toUpperCase()}</span>`;
+            document.getElementById('trust-simulation-result').innerHTML = html;
+        }
+        document.getElementById('trust-score-config').addEventListener('click', function(e) {
+            if (e.target && e.target.id === 'simulateTrustBtn') {
+                document.getElementById('trust-simulation-result').innerHTML = '';
+                simulateTrustAnalyser();
+            }
+        });
+        async function renderTrustScoreConfig() {
+            // Categories
+            const categories = [
+                'Security',
+                'Reliability',
+                'Resilience',
+                'Dependability & Uncertainty',
+                'Goal Analysis'
+            ];
+            let html = '<b>Assign weights to each category (total = 100):</b><br>';
+            categories.forEach(cat => {
+                html += `<div class="mb-2">${cat}: <input type="range" min="0" max="100" value="20" name="cat_weight_${cat}" style="width:150px;" oninput="document.getElementById('cat_weight_${cat}_val').textContent=this.value"> <span id="cat_weight_${cat}_val">20</span></div>`;
+            });
+            html += '<b>Assign weights for behaviour types:</b><br>';
+            html += `<div class="mb-2">Normal: <input type="number" min="0" max="100" value="100" name="behaviour_weight_normal" class="form-control d-inline w-auto"></div>`;
+            html += `<div class="mb-2">Unpredictable: <input type="number" min="0" max="100" value="50" name="behaviour_weight_unpredictable" class="form-control d-inline w-auto"></div>`;
+            html += `<div class="mb-2">Malicious: <input type="number" min="0" max="100" value="0" name="behaviour_weight_malicious" class="form-control d-inline w-auto"></div>`;
+            document.getElementById('trust-score-config-weights').innerHTML = html;
+        }
+        document.getElementById('tool-config-tab').addEventListener('shown.bs.tab', function() {
+            renderToolConfigStep5();
+            renderTrustScoreConfig();
+        });
+        async function calcTrustScore() {
+            // Get category weights
+            const categories = [
+                'Security',
+                'Reliability',
+                'Resilience',
+                'Dependability & Uncertainty',
+                'Goal Analysis'
+            ];
+            let catWeights = {};
+            let total = 0;
+            categories.forEach(cat => {
+                let val = parseInt(document.querySelector(`[name='cat_weight_${cat}']`).value) || 0;
+                catWeights[cat] = val;
+                total += val;
+            });
+            // Normalise
+            if (total === 0) total = 1;
+            Object.keys(catWeights).forEach(cat => {
+                catWeights[cat] = Math.round((catWeights[cat] / total) * 100);
+            });
+            // Get behaviour weights
+            let behaviourWeights = {
+                normal: parseInt(document.querySelector('[name="behaviour_weight_normal"]').value) || 0,
+                unpredictable: parseInt(document.querySelector('[name="behaviour_weight_unpredictable"]').value) || 0,
+                malicious: parseInt(document.querySelector('[name="behaviour_weight_malicious"]').value) || 0
+            };
+            // Get category behaviours from simulation (reuse simulateTrustAnalyser logic)
+            const [mappedResp, step1Resp, step2Resp, step3Resp, step4Resp] = await Promise.all([
+                fetch('/mapped'),
+                fetch('/trust-config-step1-get-all'),
+                fetch('/trust-config-step2-get-all'),
+                fetch('/trust-config-step3-get-all'),
+                fetch('/trust-config-step4-get')
+            ]);
+            const mapped = await mappedResp.json();
+            const step1 = await step1Resp.json();
+            const step2 = await step2Resp.json();
+            const step3 = await step3Resp.json();
+            const step4 = await step4Resp.json();
+            // Build lookup maps
+            const step1Map = {};
+            step1.forEach(cfg => {
+                const cat = (cfg.trust_evaluation_category || 'Uncategorized').trim().toLowerCase();
+                step1Map[`${cfg.tool_name}|||${cat}`] = cfg;
+            });
+            const step2Map = {};
+            step2.forEach(cfg => {
+                const cat = (cfg.trust_evaluation_category || 'Uncategorized').trim().toLowerCase();
+                step2Map[`${cfg.tool_name}|||${cat}`] = cfg;
+            });
+            const step3Map = {};
+            step3.forEach(cfg => {
+                const cat = (cfg.trust_evaluation_category || 'Uncategorized').trim().toLowerCase();
+                step3Map[cat] = cfg;
+            });
+            // Step 5 values
+            const step5Map = {};
+            step5.forEach(cfg => {
+                const cat = (cfg.trust_evaluation_category || 'Uncategorized').trim().toLowerCase();
+                step5Map[`${cfg.tool_name}|||${cat}`] = cfg.value;
+            });
+            // 1. Tool Impact Categorisation
+            let toolImpacts = {};
+            mapped.forEach(tool => {
+                const toolName = tool.tool_name;
+                const cat = (tool.trust_evaluation_category || 'Uncategorized').trim().toLowerCase();
+                const key = `${toolName}|||${cat}`;
+                const step1Cfg = step1Map[key] || {};
+                let impact = 'Low';
+                if (tool.data_type === 'binary') {
+                    const val = step5Map[key] || 'true';
+                    impact = val === 'true' ? (step1Cfg[`${toolName}_${cat}_on`] || 'Low') : (step1Cfg[`${toolName}_${cat}_off`] || 'Low');
+                } else if (tool.data_type === 'categorical') {
+                    const val = step5Map[key] || '';
+                    impact = step1Cfg[`${toolName}_${cat}_${val}`] || 'Low';
+                } else if (tool.data_type === 'continuous') {
+                    const val = parseFloat(step5Map[key] || tool.min_value || 0);
+                    const lower = parseFloat(step1Cfg[`${toolName}_${cat}_slider_lower`] || tool.min_value || 0);
+                    const upper = parseFloat(step1Cfg[`${toolName}_${cat}_slider_upper`] || tool.max_value || 100);
+                    if (val <= lower) impact = 'Low';
+                    else if (val <= upper) impact = 'Mid';
+                    else impact = 'High';
+                }
+                toolImpacts[key] = impact;
+            });
+            // 2. Tool Behaviour
+            let toolBehaviours = {};
+            mapped.forEach(tool => {
+                const toolName = tool.tool_name;
+                const cat = (tool.trust_evaluation_category || 'Uncategorized').trim().toLowerCase();
+                const key = `${toolName}|||${cat}`;
+                const step2Cfg = step2Map[key] || {};
+                let behaviour = 'normal';
+                if (step2Cfg.override_active === 'true') {
+                    behaviour = step2Cfg.override_behaviour || 'normal';
+                } else {
+                    const impact = toolImpacts[key];
+                    if (impact === 'Low') behaviour = 'normal';
+                    else if (impact === 'Mid') behaviour = 'unpredictable';
+                    else behaviour = 'malicious';
+                }
+                toolBehaviours[key] = behaviour;
+            });
+            // 3. Category Behaviour
+            let categoryBehaviours = {};
+            const byCategory = {};
+            mapped.forEach(tool => {
+                const cat = (tool.trust_evaluation_category || 'Uncategorized').trim().toLowerCase();
+                if (!byCategory[cat]) byCategory[cat] = [];
+                byCategory[cat].push(tool);
+            });
+            Object.entries(byCategory).forEach(([cat, tools]) => {
+                const step3Cfg = step3Map[cat] || {};
+                let behaviours = tools.map(tool => toolBehaviours[`${tool.tool_name}|||${cat}`]);
+                let finalCatBehaviour = 'normal';
+                if (step3Cfg.override_active === 'true') {
+                    // If at least override_count tools have override_behaviour
+                    const count = parseInt(step3Cfg.override_count || '0');
+                    const target = step3Cfg.override_behaviour || 'normal';
+                    const num = behaviours.filter(b => b === target).length;
+                    if (num >= count) finalCatBehaviour = target;
+                } else {
+                    // Majority
+                    const counts = {normal:0,unpredictable:0,malicious:0};
+                    behaviours.forEach(b => {counts[b] = (counts[b]||0)+1;});
+                    let max = 'normal';
+                    if (counts.malicious > counts.normal && counts.malicious > counts.unpredictable) max = 'malicious';
+                    else if (counts.unpredictable > counts.normal && counts.unpredictable > counts.malicious) max = 'unpredictable';
+                    finalCatBehaviour = max;
+                }
+                // If at least one tool with one_tool_behaviour
+                if (step3Cfg.one_tool_behaviour) {
+                    if (behaviours.includes(step3Cfg.one_tool_behaviour)) finalCatBehaviour = step3Cfg.one_tool_behaviour;
+                }
+                categoryBehaviours[cat] = finalCatBehaviour;
+            });
+            // 4. Trust Score Calculation
+            let score = 0;
+            let details = '<b>Trust Score Calculation:</b><ul>';
+            categories.forEach(cat => {
+                let catKey = cat.trim().toLowerCase();
+                let behaviour = categoryBehaviours[cat] || 'normal';
+                let catWeight = catWeights[cat];
+                let behWeight = behaviourWeights[behaviour];
+                let partial = (catWeight * behWeight) / 100;
+                score += partial;
+                details += `<li>${cat}: Weight=${catWeight}, Behaviour=${behaviour}, Behaviour Weight=${behWeight}, Partial=${partial.toFixed(2)}</li>`;
+            });
+            details += `</ul><b>Final Trust Score: <span class="badge bg-info">${score.toFixed(2)}</span></b>`;
+            document.getElementById('trust-score-result').innerHTML = details;
+        }
+        document.getElementById('trust-config').addEventListener('click', function(e) {
+            if (e.target && e.target.id === 'calcTrustScoreBtn') {
+                calcTrustScore();
+            }
+        });
+        function renderMappedRequestsTable(mappedRequests) {
+            const tableBody = document.getElementById('mapped-requests-table-body');
+            tableBody.innerHTML = '';
+            if (mappedRequests.length === 0) {
+                const row = document.createElement('tr');
+                const cell = document.createElement('td');
+                cell.colSpan = 6;
+                cell.className = 'text-center text-muted';
+                cell.innerText = 'No mapped requests found.';
+                row.appendChild(cell);
+                tableBody.appendChild(row);
+                return;
+            }
+            mappedRequests.forEach((req, idx) => {
+                const row = `<tr>
+                    <td>${req.tool_name}</td>
+                    <td>${req.description || ''}</td>
+                    <td>${req.data_type}</td>
+                    <td>${req.trust_evaluation_category || ''}</td>
+                    <td>${req.unique_id_path}</td>
+                    <td>${req.unique_id_value || ''}</td>
+                    <td>${req.value_path}</td>
+                    <td>${req.categories || ''}</td>
+                    <td>${req.supplement || ''}</td>
+                    <td>${req.count || 0}</td>
+                </tr>`;
+                tableBody.innerHTML += row;
+            });
+        }
+    </script>
+</body>
+</html>

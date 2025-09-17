@@ -1,0 +1,6 @@
+--clear mongodb
+python3 -c "from pymongo import MongoClient; c=MongoClient('mongodb://localhost:27017/'); db=c['telemetry']; db['tool_data'].delete_many({}); db['mapped_requests'].delete_many({}); print('Cleared tool_data and mapped_requests collections.')"
+
+--run server
+uvicorn api.main:app --reload --host 0.0.0.0 --port 8001
+uvicorn fastapi_sender:app --reload
