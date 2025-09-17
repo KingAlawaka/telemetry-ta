@@ -1,7 +1,3 @@
-            // Debug output
-            console.log('Category Weights:', catWeights);
-            console.log('Behaviour Weights:', behaviourWeights);
-            console.log('Category Behaviours:', categoryBehaviours);
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -815,7 +811,48 @@
         document.getElementById('trust-score-config').addEventListener('click', function(e) {
             if (e.target && e.target.id === 'saveTrustScoreStep5Btn') {
                 saveToolConfigStep5();
+                saveTrustScoreWeights();
             }
+        async function saveTrustScoreWeights() {
+            // Get and normalise category weights
+            const categories = [
+                'Security',
+                'Reliability',
+                'Resilience',
+                'Dependability & Uncertainty',
+                'Goal Analysis'
+            ];
+            let catWeights = {};
+            let total = 0;
+            categories.forEach(cat => {
+                let val = parseInt(document.querySelector(`[name='cat_weight_${cat}']`).value) || 0;
+                catWeights[cat] = val;
+                total += val;
+            });
+            if (total === 0) total = 1;
+            Object.keys(catWeights).forEach(cat => {
+                catWeights[cat] = Math.round((catWeights[cat] / total) * 100);
+            });
+            // Get and normalise behaviour weights
+            let behaviourWeights = {
+                normal: parseInt(document.getElementById('behaviour_weight_normal').value) || 0,
+                unpredictable: parseInt(document.getElementById('behaviour_weight_unpredictable').value) || 0,
+                malicious: parseInt(document.getElementById('behaviour_weight_malicious').value) || 0
+            };
+            // Do NOT normalise behaviour weights, save as entered
+            // Save to DB
+            const resp = await fetch('/trust-score-weights', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ category_weights: catWeights, behaviour_weights: behaviourWeights })
+            });
+            const msgDiv = document.getElementById('trust-score-step5-msg');
+            if (resp.ok) {
+                msgDiv.innerHTML += '<br><span class="text-success">Trust score weights saved!</span>';
+            } else {
+                msgDiv.innerHTML += '<br><span class="text-danger">Failed to save trust score weights.</span>';
+            }
+        }
         });
         async function simulateTrustAnalyser() {
             // Always fetch all configs fresh
@@ -1037,9 +1074,9 @@
             });
         }
             html += '<b>Assign weights for behaviour types:</b><br>';
-            html += `<div class="mb-2">Normal: <input type="number" min="0" max="100" value="100" name="behaviour_weight_normal" class="form-control d-inline w-auto"></div>`;
-            html += `<div class="mb-2">Unpredictable: <input type="number" min="0" max="100" value="50" name="behaviour_weight_unpredictable" class="form-control d-inline w-auto"></div>`;
-            html += `<div class="mb-2">Malicious: <input type="number" min="0" max="100" value="0" name="behaviour_weight_malicious" class="form-control d-inline w-auto"></div>`;
+            html += `<div class="mb-2">Normal: <input type="number" min="0" max="100" value="100" name="behaviour_weight_normal" id="behaviour_weight_normal" class="form-control d-inline w-auto" oninput="window.behaviourWeightNormal=this.value"></div>`;
+            html += `<div class="mb-2">Unpredictable: <input type="number" min="0" max="100" value="50" name="behaviour_weight_unpredictable" id="behaviour_weight_unpredictable" class="form-control d-inline w-auto" oninput="window.behaviourWeightUnpredictable=this.value"></div>`;
+            html += `<div class="mb-2">Malicious: <input type="number" min="0" max="100" value="0" name="behaviour_weight_malicious" id="behaviour_weight_malicious" class="form-control d-inline w-auto" oninput="window.behaviourWeightMalicious=this.value"></div>`;
             document.getElementById('trust-score-config-weights').innerHTML = html;
         }
         document.getElementById('tool-config-tab').addEventListener('shown.bs.tab', function() {
