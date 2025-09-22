@@ -1022,6 +1022,7 @@
             Object.entries(categoryBehaviours).forEach(([cat, behaviour]) => {
                 html += `<li>${cat}: <b>${behaviour}</b></li>`;
             });
+            window.simulatedCategoryBehaviours = categoryBehaviours;
             html += `</ul><b>System Behaviour (Step 4):</b> <span class="badge bg-${systemBehaviour==='normal'?'success':systemBehaviour==='unpredictable'?'warning':'danger'}">${systemBehaviour.toUpperCase()}</span>`;
             document.getElementById('trust-simulation-result').innerHTML = html;
         }
@@ -1045,6 +1046,8 @@
                 html += `<div class="mb-2">${cat}: <input type="range" min="0" max="100" value="20" name="cat_weight_${cat}" style="width:150px;" oninput="document.getElementById('cat_weight_${cat}_val').textContent=this.value"> <span id="cat_weight_${cat}_val">20</span></div>`;
             });
             html += '<button class="btn btn-secondary mt-2" id="normaliseWeightsBtn">Normalise Weights</button>';
+            html += '<hr><h5>Tool Inputs for Simulation</h5>';
+            html += '<div id="tool-inputs-panel"></div>';
         document.getElementById('trust-score-config-weights').addEventListener('click', function(e) {
             if (e.target && e.target.id === 'normaliseWeightsBtn') {
                 normaliseCategoryWeights();
@@ -1082,6 +1085,33 @@
         document.getElementById('tool-config-tab').addEventListener('shown.bs.tab', function() {
             renderToolConfigStep5();
             renderTrustScoreConfig();
+            setupToolInputPanel();
+        function setupToolInputPanel() {
+            const panel = document.getElementById('tool-inputs-panel');
+            panel.innerHTML = '';
+            let toolInputs = [];
+            function renderInputs() {
+                panel.innerHTML = '';
+                toolInputs.forEach((input, idx) => {
+                    panel.innerHTML += `<div class="mb-2 border p-2 rounded">
+                        <label>Tool Name:</label> <input type="text" class="form-control d-inline w-auto" value="${input.tool_name||''}" onchange="this.parentElement.parentElement.toolInputs[${idx}].tool_name=this.value">
+                        <label>Category:</label> <input type="text" class="form-control d-inline w-auto" value="${input.category||''}" onchange="this.parentElement.parentElement.toolInputs[${idx}].category=this.value">
+                        <label>Value:</label> <input type="text" class="form-control d-inline w-auto" value="${input.value||''}" onchange="this.parentElement.parentElement.toolInputs[${idx}].value=this.value">
+                        <label>Count:</label> <input type="number" min="1" class="form-control d-inline w-auto" value="${input.count||1}" onchange="this.parentElement.parentElement.toolInputs[${idx}].count=this.value">
+                        <button class="btn btn-sm btn-danger ms-2" onclick="this.parentElement.parentElement.toolInputs.splice(${idx},1);this.parentElement.parentElement.renderInputs();">Remove</button>
+                    </div>`;
+                });
+                panel.toolInputs = toolInputs;
+                panel.renderInputs = renderInputs;
+            }
+            panel.toolInputs = toolInputs;
+            panel.renderInputs = renderInputs;
+            renderInputs();
+            document.getElementById('addToolInputBtn').onclick = function() {
+                toolInputs.push({tool_name:'',category:'',value:'',count:1});
+                renderInputs();
+            };
+        }
         });
         async function calcTrustScore() {
             // Get category weights
@@ -1110,132 +1140,8 @@
                 unpredictable: parseInt(document.querySelector('[name="behaviour_weight_unpredictable"]').value) || 0,
                 malicious: parseInt(document.querySelector('[name="behaviour_weight_malicious"]').value) || 0
             };
-            // Get category behaviours from simulation (reuse simulateTrustAnalyser logic)
-            const [mappedResp, step1Resp, step2Resp, step3Resp, step4Resp, step5Resp] = await Promise.all([
-                fetch('/mapped'),
-                fetch('/trust-config-step1-get-all'),
-                fetch('/trust-config-step2-get-all'),
-                fetch('/trust-config-step3-get-all'),
-                fetch('/trust-config-step4-get'),
-                fetch('/tool-config-step5-get')
-            ]);
-            const mapped = await mappedResp.json();
-            const step1 = await step1Resp.json();
-            const step2 = await step2Resp.json();
-            const step3 = await step3Resp.json();
-            const step4 = await step4Resp.json();
-            const step5 = await step5Resp.json();
-            // Build lookup maps
-            const step1Map = {};
-            step1.forEach(cfg => {
-                const cat = (cfg.trust_evaluation_category || 'Uncategorized').trim().toLowerCase();
-                step1Map[`${cfg.tool_name}|||${cat}`] = cfg;
-            });
-            const step2Map = {};
-            step2.forEach(cfg => {
-                const cat = (cfg.trust_evaluation_category || 'Uncategorized').trim().toLowerCase();
-                step2Map[`${cfg.tool_name}|||${cat}`] = cfg;
-            });
-            const step3Map = {};
-            step3.forEach(cfg => {
-                const cat = (cfg.trust_evaluation_category || 'Uncategorized').trim().toLowerCase();
-                step3Map[cat] = cfg;
-            });
-            // Step 5 values
-            const step5Map = {};
-            step5.forEach(cfg => {
-                const cat = (cfg.trust_evaluation_category || 'Uncategorized').trim().toLowerCase();
-                step5Map[`${cfg.tool_name}|||${cat}`] = cfg.value;
-            });
-            // 1. Tool Impact Categorisation
-            let toolImpacts = {};
-            mapped.forEach(tool => {
-                const toolName = tool.tool_name;
-                const cat = (tool.trust_evaluation_category || 'Uncategorized').trim().toLowerCase();
-                const key = `${toolName}|||${cat}`;
-                const step1Cfg = step1Map[key] || {};
-                let impact = 'Low';
-                if (tool.data_type === 'binary') {
-                    const val = step5Map[key] || 'true';
-                    impact = val === 'true' ? (step1Cfg[`${toolName}_${cat}_on`] || 'Low') : (step1Cfg[`${toolName}_${cat}_off`] || 'Low');
-                } else if (tool.data_type === 'categorical') {
-                    const val = step5Map[key] || '';
-                    impact = step1Cfg[`${toolName}_${cat}_${val}`] || 'Low';
-                } else if (tool.data_type === 'continuous') {
-                    const val = parseFloat(step5Map[key] || tool.min_value || 0);
-                    const lower = parseFloat(step1Cfg[`${toolName}_${cat}_slider_lower`] || tool.min_value || 0);
-                    const upper = parseFloat(step1Cfg[`${toolName}_${cat}_slider_upper`] || tool.max_value || 100);
-                    if (val <= lower) impact = 'Low';
-                    else if (val <= upper) impact = 'Mid';
-                    else impact = 'High';
-                }
-                toolImpacts[key] = impact;
-            });
-            // 2. Tool Behaviour
-            let toolBehaviours = {};
-            mapped.forEach(tool => {
-                const toolName = tool.tool_name;
-                const cat = (tool.trust_evaluation_category || 'Uncategorized').trim().toLowerCase();
-                const key = `${toolName}|||${cat}`;
-                const step2Cfg = step2Map[key] || {};
-                let behaviour = 'normal';
-                if (step2Cfg.override_active === 'true') {
-                    behaviour = step2Cfg.override_behaviour || 'normal';
-                } else {
-                    const impact = toolImpacts[key];
-                    if (impact === 'Low') behaviour = 'normal';
-                    else if (impact === 'Mid') behaviour = 'unpredictable';
-                    else behaviour = 'malicious';
-                }
-                toolBehaviours[key] = behaviour;
-            });
-            // 3. Category Behaviour
-            let categoryBehaviours = {};
-            const byCategory = {};
-            mapped.forEach(tool => {
-                const cat = (tool.trust_evaluation_category || 'Uncategorized').trim().toLowerCase();
-                if (!byCategory[cat]) byCategory[cat] = [];
-                byCategory[cat].push(tool);
-            });
-            Object.entries(byCategory).forEach(([cat, tools]) => {
-                const step3Cfg = step3Map[cat] || {};
-                let behaviours = tools.map(tool => toolBehaviours[`${tool.tool_name}|||${cat}`]);
-                let finalCatBehaviour = 'normal';
-                if (step3Cfg.override_active === 'true') {
-                    // If at least override_count tools have override_behaviour, set category behaviour to override_behaviour
-                    const count = parseInt(step3Cfg.override_count || '0');
-                    const target = step3Cfg.override_behaviour || 'normal';
-                    const num = behaviours.filter(b => b === target).length;
-                    if (num >= count) {
-                        finalCatBehaviour = target;
-                    } else {
-                        // If not enough for override, use majority rule
-                        const counts = {normal:0,unpredictable:0,malicious:0};
-                        behaviours.forEach(b => {counts[b] = (counts[b]||0)+1;});
-                        let max = 'normal';
-                        if (counts.malicious > counts.normal && counts.malicious > counts.unpredictable) max = 'malicious';
-                        else if (counts.unpredictable > counts.normal && counts.unpredictable > counts.malicious) max = 'unpredictable';
-                        else if (counts.normal > counts.unpredictable && counts.normal > counts.malicious) max = 'normal';
-                        else if (counts.normal === counts.unpredictable || counts.normal === counts.malicious || counts.unpredictable === counts.malicious) max = 'unpredictable';
-                        finalCatBehaviour = max;
-                    }
-                } else {
-                    // Default: majority rule
-                    const counts = {normal:0,unpredictable:0,malicious:0};
-                    behaviours.forEach(b => {counts[b] = (counts[b]||0)+1;});
-                    let max = 'normal';
-                    if (counts.malicious > counts.normal && counts.malicious > counts.unpredictable) max = 'malicious';
-                    else if (counts.unpredictable > counts.normal && counts.unpredictable > counts.malicious) max = 'unpredictable';
-                    else if (counts.normal > counts.unpredictable && counts.normal > counts.malicious) max = 'normal';
-                    else if (counts.normal === counts.unpredictable || counts.normal === counts.malicious || counts.unpredictable === counts.malicious) max = 'unpredictable';
-                    finalCatBehaviour = max;
-                }
-                // If at least one tool with one_tool_behaviour, set to that behaviour
-                if (step3Cfg.one_tool_behaviour) {
-                    if (behaviours.includes(step3Cfg.one_tool_behaviour)) finalCatBehaviour = step3Cfg.one_tool_behaviour;
-                }
-                categoryBehaviours[cat] = finalCatBehaviour;
-            });
+            // Use previously simulated categoryBehaviours if available
+            let categoryBehaviours = window.simulatedCategoryBehaviours || {};
             // 4. Trust Score Calculation
             // Normalize behaviour weights if sum > 100
             let behTotal = behaviourWeights.normal + behaviourWeights.unpredictable + behaviourWeights.malicious;
