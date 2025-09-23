@@ -1,35 +1,64 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Telemetry Dashboard</title>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
     <style>
-        .json-collapsed { display: none; }
-        .json-expanded { display: block; }
-        .pointer { cursor: pointer; }
-        .json-tree { font-family: monospace; font-size: 0.95em; }
-        .json-key { color: #007bff; cursor: pointer; }
-        .json-leaf { color: #333; cursor: pointer; }
-        .json-branch { margin-left: 1em; }
+        .json-collapsed {
+            display: none;
+        }
+
+        .json-expanded {
+            display: block;
+        }
+
+        .pointer {
+            cursor: pointer;
+        }
+
+        .json-tree {
+            font-family: monospace;
+            font-size: 0.95em;
+        }
+
+        .json-key {
+            color: #007bff;
+            cursor: pointer;
+        }
+
+        .json-leaf {
+            color: #333;
+            cursor: pointer;
+        }
+
+        .json-branch {
+            margin-left: 1em;
+        }
     </style>
 </head>
+
 <body>
     <div class="container mt-5">
         <h1>Telemetry Dashboard</h1>
         <ul class="nav nav-tabs" id="dashboardTabs" role="tablist">
             <li class="nav-item" role="presentation">
-                <button class="nav-link active" id="requests-tab" data-bs-toggle="tab" data-bs-target="#requests" type="button" role="tab">Requests</button>
+                <button class="nav-link active" id="requests-tab" data-bs-toggle="tab" data-bs-target="#requests"
+                    type="button" role="tab">Requests</button>
             </li>
             <li class="nav-item" role="presentation">
-                <button class="nav-link" id="mapped-tab" data-bs-toggle="tab" data-bs-target="#mapped" type="button" role="tab">Mapped Requests</button>
+                <button class="nav-link" id="mapped-tab" data-bs-toggle="tab" data-bs-target="#mapped" type="button"
+                    role="tab">Mapped Requests</button>
             </li>
             <li class="nav-item" role="presentation">
-                <button class="nav-link" id="trust-config-tab" data-bs-toggle="tab" data-bs-target="#trust-config" type="button" role="tab">Trust Analyser Configuration</button>
+                <button class="nav-link" id="trust-config-tab" data-bs-toggle="tab" data-bs-target="#trust-config"
+                    type="button" role="tab">Trust Analyser Configuration</button>
             </li>
             <li class="nav-item" role="presentation">
-                <button class="nav-link" id="tool-config-tab" data-bs-toggle="tab" data-bs-target="#trust-score-config" type="button" role="tab">Trust Score Configuration</button>
+                <button class="nav-link" id="tool-config-tab" data-bs-toggle="tab" data-bs-target="#trust-score-config"
+                    type="button" role="tab">Trust Score Configuration</button>
             </li>
         </ul>
         <div class="tab-content" id="dashboardTabsContent">
@@ -99,7 +128,8 @@
                 <div class="mt-4">
                     <h4>Trust Score Configuration</h4>
                     <div id="trust-score-step5"></div>
-                    <button class="btn btn-info mt-3" id="saveTrustScoreStep5Btn">Save Trust Score Configuration</button>
+                    <button class="btn btn-info mt-3" id="saveTrustScoreStep5Btn">Save Trust Score
+                        Configuration</button>
                     <button class="btn btn-warning mt-3 ms-2" id="simulateTrustBtn">Simulate Trust Analyser</button>
                     <div id="trust-score-step5-msg" class="mt-2"></div>
                     <div id="trust-simulation-result" class="mt-4"></div>
@@ -153,14 +183,14 @@
                         <td><input type="checkbox" name="${toolName}_${cat}_override_active" value="true" ${overrideActive ? 'checked' : ''}></td>
                         <td><input type="number" min="1" class="form-control w-auto d-inline" name="${toolName}_${cat}_override_count" value="${countVal}"></td>
                         <td><select class="form-select w-auto d-inline" name="${toolName}_${cat}_override_impact">
-                            <option value="low" ${impactVal==='low'?'selected':''}>Low</option>
-                            <option value="mid" ${impactVal==='mid'?'selected':''}>Mid</option>
-                            <option value="high" ${impactVal==='high'?'selected':''}>High</option>
+                            <option value="low" ${impactVal === 'low' ? 'selected' : ''}>Low</option>
+                            <option value="mid" ${impactVal === 'mid' ? 'selected' : ''}>Mid</option>
+                            <option value="high" ${impactVal === 'high' ? 'selected' : ''}>High</option>
                         </select></td>
                         <td><select class="form-select w-auto d-inline" name="${toolName}_${cat}_override_behaviour">
-                            <option value="normal" ${behaviourVal==='normal'?'selected':''}>Normal</option>
-                            <option value="unpredictable" ${behaviourVal==='unpredictable'?'selected':''}>Unpredictable</option>
-                            <option value="malicious" ${behaviourVal==='malicious'?'selected':''}>Malicious</option>
+                            <option value="normal" ${behaviourVal === 'normal' ? 'selected' : ''}>Normal</option>
+                            <option value="unpredictable" ${behaviourVal === 'unpredictable' ? 'selected' : ''}>Unpredictable</option>
+                            <option value="malicious" ${behaviourVal === 'malicious' ? 'selected' : ''}>Malicious</option>
                         </select></td></tr>`;
                 });
                 html += '</tbody></table></div>';
@@ -168,7 +198,7 @@
             document.getElementById('trust-config-step2').innerHTML = html;
         }
         // Render step 2 on tab show
-        document.getElementById('trust-config-tab').addEventListener('shown.bs.tab', function() {
+        document.getElementById('trust-config-tab').addEventListener('shown.bs.tab', function () {
             renderTrustConfigStep1();
             renderTrustConfigStep2();
             renderTrustConfigStep3();
@@ -189,7 +219,7 @@
             let configsToSave = [];
             rows.forEach(row => {
                 const toolName = row.querySelector('td').textContent;
-                let cat = row.closest('table').parentElement.previousSibling.textContent.replace('Category:','').trim().toLowerCase();
+                let cat = row.closest('table').parentElement.previousSibling.textContent.replace('Category:', '').trim().toLowerCase();
                 let overrideActive = row.querySelector(`input[name="${toolName}_${cat}_override_active"]`).checked ? 'true' : 'false';
                 let config = { tool_name: toolName, trust_evaluation_category: cat, mapped_request_id: toolCatIdMap[`${toolName}|||${cat}`] || '', override_active: overrideActive };
                 if (overrideActive === 'true') {
@@ -219,7 +249,7 @@
                 }
             });
         }
-        document.getElementById('trust-config').addEventListener('click', function(e) {
+        document.getElementById('trust-config').addEventListener('click', function (e) {
             if (e.target && e.target.id === 'saveTrustConfigStep2Btn') {
                 saveTrustConfigStep2();
             }
@@ -240,7 +270,7 @@
             rows.forEach(async row => {
                 const toolName = row.querySelector('td').textContent;
                 // Find category from parent table
-                let cat = row.closest('table').parentElement.previousSibling.textContent.replace('Category:','').trim().toLowerCase();
+                let cat = row.closest('table').parentElement.previousSibling.textContent.replace('Category:', '').trim().toLowerCase();
                 let config = { tool_name: toolName, trust_evaluation_category: cat };
                 // Add mapped_request_id
                 config.mapped_request_id = toolCatIdMap[`${toolName}|||${cat}`] || '';
@@ -268,7 +298,7 @@
                 }
             });
         }
-        document.getElementById('trust-config').addEventListener('click', function(e) {
+        document.getElementById('trust-config').addEventListener('click', function (e) {
             if (e.target && e.target.id === 'saveTrustConfigBtn') {
                 saveTrustConfig();
             }
@@ -305,12 +335,12 @@
                     if (tool.data_type === 'binary') {
                         const onVal = cfg[`${toolName}_${cat}_on`] || 'Low';
                         const offVal = cfg[`${toolName}_${cat}_off`] || 'Low';
-                        html += `<div>On: <select class="form-select d-inline w-auto" name="${toolName}_${cat}_on"><option${onVal==='Low'?' selected':''}>Low</option><option${onVal==='Mid'?' selected':''}>Mid</option><option${onVal==='High'?' selected':''}>High</option></select> &nbsp; Off: <select class="form-select d-inline w-auto" name="${toolName}_${cat}_off"><option${offVal==='Low'?' selected':''}>Low</option><option${offVal==='Mid'?' selected':''}>Mid</option><option${offVal==='High'?' selected':''}>High</option></select></div>`;
+                        html += `<div>On: <select class="form-select d-inline w-auto" name="${toolName}_${cat}_on"><option${onVal === 'Low' ? ' selected' : ''}>Low</option><option${onVal === 'Mid' ? ' selected' : ''}>Mid</option><option${onVal === 'High' ? ' selected' : ''}>High</option></select> &nbsp; Off: <select class="form-select d-inline w-auto" name="${toolName}_${cat}_off"><option${offVal === 'Low' ? ' selected' : ''}>Low</option><option${offVal === 'Mid' ? ' selected' : ''}>Mid</option><option${offVal === 'High' ? ' selected' : ''}>High</option></select></div>`;
                     } else if (tool.data_type === 'categorical') {
-                        const cats = (tool.categories||'').split(',').map(x=>x.trim()).filter(Boolean);
+                        const cats = (tool.categories || '').split(',').map(x => x.trim()).filter(Boolean);
                         cats.forEach(c => {
                             const catVal = cfg[`${toolName}_${cat}_${c}`] || 'Low';
-                            html += `<div>${c}: <select class="form-select d-inline w-auto" name="${toolName}_${cat}_${c}"><option${catVal==='Low'?' selected':''}>Low</option><option${catVal==='Mid'?' selected':''}>Mid</option><option${catVal==='High'?' selected':''}>High</option></select></div>`;
+                            html += `<div>${c}: <select class="form-select d-inline w-auto" name="${toolName}_${cat}_${c}"><option${catVal === 'Low' ? ' selected' : ''}>Low</option><option${catVal === 'Mid' ? ' selected' : ''}>Mid</option><option${catVal === 'High' ? ' selected' : ''}>High</option></select></div>`;
                         });
                     } else if (tool.data_type === 'continuous') {
                         const min = tool.min_value !== undefined ? tool.min_value : 0;
@@ -336,7 +366,7 @@
                                 if (l > u) { var t = l; l = u; u = t; }
                                 lowerValSpan.textContent = l;
                                 upperValSpan.textContent = u;
-                                impactDiv.innerHTML = '<b>Impact Ranges:</b><br>Low: ' + min + ' to ' + l + '<br>Mid: ' + (l+1) + ' to ' + u + '<br>High: Above ' + u;
+                                impactDiv.innerHTML = '<b>Impact Ranges:</b><br>Low: ' + min + ' to ' + l + '<br>Mid: ' + (l + 1) + ' to ' + u + '<br>High: Above ' + u;
                             }
                             lower.addEventListener('input', update);
                             upper.addEventListener('input', update);
@@ -445,7 +475,7 @@
             win.document.write('<div class="mb-2" id="continuousDiv" style="display:none;">' +
                 '<label>Min Value</label><input class="form-control mb-1" name="min_value" id="minValueBox" type="number" step="any" disabled>' +
                 '<label>Max Value</label><input class="form-control" name="max_value" id="maxValueBox" type="number" step="any" disabled>' +
-            '</div>');
+                '</div>');
             win.document.write('<div class="mb-2"><label>Unique ID Path</label><input class="form-control" name="unique_id_path" id="uniqueIdPath" placeholder="e.g. payload.id"></div>');
             win.document.write('<div class="mb-2"><label>Unique ID Value</label><input class="form-control" name="unique_id_value" id="uniqueIdValue" readonly></div>');
             win.document.write('<div class="mb-2"><label>Value Path</label><input class="form-control" name="value_path" id="valuePath" placeholder="e.g. payload.value"></div>');
@@ -581,17 +611,17 @@
                         </label><br>
                         <input type="number" min="1" class="form-control d-inline w-auto" style="width:80px;" name="${cat}_override_count" placeholder="Number of tools" value="${overrideCount}">
                         <select class="form-select w-auto d-inline" name="${cat}_tool_behaviour">
-                            <option value="normal" ${toolBehaviour==='normal'?'selected':''}>Normal</option>
-                            <option value="unpredictable" ${toolBehaviour==='unpredictable'?'selected':''}>Unpredictable</option>
-                            <option value="malicious" ${toolBehaviour==='malicious'?'selected':''}>Malicious</option>
+                            <option value="normal" ${toolBehaviour === 'normal' ? 'selected' : ''}>Normal</option>
+                            <option value="unpredictable" ${toolBehaviour === 'unpredictable' ? 'selected' : ''}>Unpredictable</option>
+                            <option value="malicious" ${toolBehaviour === 'malicious' ? 'selected' : ''}>Malicious</option>
                         </select>
                         <span class="text-secondary ms-2">(If at least <b>number of tools</b> then <b>behaviour</b>)</span>
                     </div>
                     <div class="mt-2">If at least one tool with this behaviour:
                         <select class="form-select w-auto d-inline" name="${cat}_override_behaviour">
-                            <option value="normal" ${overrideBehaviour==='normal'?'selected':''}>Normal</option>
-                            <option value="unpredictable" ${overrideBehaviour==='unpredictable'?'selected':''}>Unpredictable</option>
-                            <option value="malicious" ${overrideBehaviour==='malicious'?'selected':''}>Malicious</option>
+                            <option value="normal" ${overrideBehaviour === 'normal' ? 'selected' : ''}>Normal</option>
+                            <option value="unpredictable" ${overrideBehaviour === 'unpredictable' ? 'selected' : ''}>Unpredictable</option>
+                            <option value="malicious" ${overrideBehaviour === 'malicious' ? 'selected' : ''}>Malicious</option>
                         </select>
                         <span class="text-secondary ms-2">(Result in this behaviour)</span>
                     </div>
@@ -601,7 +631,7 @@
             document.getElementById('trust-config-step3').innerHTML = html;
         }
         // Render step 3 on tab show
-        document.getElementById('trust-config-tab').addEventListener('shown.bs.tab', function() {
+        document.getElementById('trust-config-tab').addEventListener('shown.bs.tab', function () {
             renderTrustConfigStep3();
         });
         async function saveTrustConfigStep3() {
@@ -642,7 +672,7 @@
                 }
             });
         }
-        document.getElementById('trust-config').addEventListener('click', function(e) {
+        document.getElementById('trust-config').addEventListener('click', function (e) {
             if (e.target && e.target.id === 'saveTrustConfigStep3Btn') {
                 saveTrustConfigStep3();
             }
@@ -664,22 +694,22 @@
             </label><br>
             <input type="number" min="1" class="form-control d-inline w-auto" style="width:80px;" name="system_override_count" placeholder="Number of categories" value="${overrideCount}">
             <select class="form-select w-auto d-inline" name="system_override_behaviour">
-                <option value="normal" ${overrideBehaviour==='normal'?'selected':''}>Normal</option>
-                <option value="unpredictable" ${overrideBehaviour==='unpredictable'?'selected':''}>Unpredictable</option>
-                <option value="malicious" ${overrideBehaviour==='malicious'?'selected':''}>Malicious</option>
+                <option value="normal" ${overrideBehaviour === 'normal' ? 'selected' : ''}>Normal</option>
+                <option value="unpredictable" ${overrideBehaviour === 'unpredictable' ? 'selected' : ''}>Unpredictable</option>
+                <option value="malicious" ${overrideBehaviour === 'malicious' ? 'selected' : ''}>Malicious</option>
             </select>
             <span class="text-secondary ms-2">(If at least <b>number of categories</b> then <b>behaviour</b>)</span>
         </div>
         <div class="mt-2">Final System Behaviour: <select class="form-select w-auto d-inline" name="system_final_behaviour">
-            <option value="normal" ${finalBehaviour==='normal'?'selected':''}>Normal</option>
-            <option value="unpredictable" ${finalBehaviour==='unpredictable'?'selected':''}>Unpredictable</option>
-            <option value="malicious" ${finalBehaviour==='malicious'?'selected':''}>Malicious</option>
+            <option value="normal" ${finalBehaviour === 'normal' ? 'selected' : ''}>Normal</option>
+            <option value="unpredictable" ${finalBehaviour === 'unpredictable' ? 'selected' : ''}>Unpredictable</option>
+            <option value="malicious" ${finalBehaviour === 'malicious' ? 'selected' : ''}>Malicious</option>
         </select></div>
     </div>`;
             document.getElementById('trust-config-step4').innerHTML = html;
         }
         // Render step 4 on tab show
-        document.getElementById('trust-config-tab').addEventListener('shown.bs.tab', function() {
+        document.getElementById('trust-config-tab').addEventListener('shown.bs.tab', function () {
             renderTrustConfigStep4();
         });
         async function saveTrustConfigStep4() {
@@ -707,7 +737,7 @@
                 msgDiv.innerHTML = '<span class="text-danger">Failed to save step 4 configuration.</span>';
             }
         }
-        document.getElementById('trust-config').addEventListener('click', function(e) {
+        document.getElementById('trust-config').addEventListener('click', function (e) {
             if (e.target && e.target.id === 'saveTrustConfigStep4Btn') {
                 saveTrustConfigStep4();
             }
@@ -744,15 +774,15 @@
                     if (tool.data_type === 'binary') {
                         const val = cfg.value || 'true';
                         html += `<select class="form-select w-auto d-inline" name="${toolName}_${cat}_value">
-                    <option value="true" ${val==='true'?'selected':''}>True</option>
-                    <option value="false" ${val==='false'?'selected':''}>False</option>
+                    <option value="true" ${val === 'true' ? 'selected' : ''}>True</option>
+                    <option value="false" ${val === 'false' ? 'selected' : ''}>False</option>
                 </select>`;
                     } else if (tool.data_type === 'categorical') {
-                        const cats = (tool.categories||'').split(',').map(x=>x.trim()).filter(Boolean);
+                        const cats = (tool.categories || '').split(',').map(x => x.trim()).filter(Boolean);
                         const val = cfg.value || (cats.length ? cats[0] : '');
                         html += `<select class="form-select w-auto d-inline" name="${toolName}_${cat}_value">`;
                         cats.forEach(c => {
-                            html += `<option value="${c}" ${val===c?'selected':''}>${c}</option>`;
+                            html += `<option value="${c}" ${val === c ? 'selected' : ''}>${c}</option>`;
                         });
                         html += `</select>`;
                     } else if (tool.data_type === 'continuous') {
@@ -775,17 +805,17 @@
             document.getElementById('trust-score-step5').innerHTML = html;
         }
 
-        document.getElementById('tool-config-tab').addEventListener('shown.bs.tab', function() {
+        document.getElementById('tool-config-tab').addEventListener('shown.bs.tab', function () {
             renderToolConfigStep5();
         });
 
         async function saveToolConfigStep5() {
-            const container = document.getElementById('tool-config-step5');
+            const container = document.getElementById('trust-score-step5');
             const rows = container.querySelectorAll('tbody tr');
             let configsToSave = [];
             rows.forEach(row => {
                 const toolName = row.querySelector('td').textContent;
-                let cat = row.closest('table').parentElement.previousSibling.textContent.replace('Category:','').trim().toLowerCase();
+                let cat = row.closest('table').parentElement.previousSibling.textContent.replace('Category:', '').trim().toLowerCase();
                 let valueInput = row.querySelector(`[name="${toolName}_${cat}_value"]`);
                 let value = valueInput.value;
                 configsToSave.push({ tool_name: toolName, trust_evaluation_category: cat, value });
@@ -808,51 +838,51 @@
                 }
             }
         }
-        document.getElementById('trust-score-config').addEventListener('click', function(e) {
+        document.getElementById('trust-score-config').addEventListener('click', function (e) {
             if (e.target && e.target.id === 'saveTrustScoreStep5Btn') {
                 saveToolConfigStep5();
                 saveTrustScoreWeights();
             }
-        async function saveTrustScoreWeights() {
-            // Get and normalise category weights
-            const categories = [
-                'Security',
-                'Reliability',
-                'Resilience',
-                'Dependability & Uncertainty',
-                'Goal Analysis'
-            ];
-            let catWeights = {};
-            let total = 0;
-            categories.forEach(cat => {
-                let val = parseInt(document.querySelector(`[name='cat_weight_${cat}']`).value) || 0;
-                catWeights[cat] = val;
-                total += val;
-            });
-            if (total === 0) total = 1;
-            Object.keys(catWeights).forEach(cat => {
-                catWeights[cat] = Math.round((catWeights[cat] / total) * 100);
-            });
-            // Get and normalise behaviour weights
-            let behaviourWeights = {
-                normal: parseInt(document.getElementById('behaviour_weight_normal').value) || 0,
-                unpredictable: parseInt(document.getElementById('behaviour_weight_unpredictable').value) || 0,
-                malicious: parseInt(document.getElementById('behaviour_weight_malicious').value) || 0
-            };
-            // Do NOT normalise behaviour weights, save as entered
-            // Save to DB
-            const resp = await fetch('/trust-score-weights', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ category_weights: catWeights, behaviour_weights: behaviourWeights })
-            });
-            const msgDiv = document.getElementById('trust-score-step5-msg');
-            if (resp.ok) {
-                msgDiv.innerHTML += '<br><span class="text-success">Trust score weights saved!</span>';
-            } else {
-                msgDiv.innerHTML += '<br><span class="text-danger">Failed to save trust score weights.</span>';
+            async function saveTrustScoreWeights() {
+                // Get and normalise category weights
+                const categories = [
+                    'Security',
+                    'Reliability',
+                    'Resilience',
+                    'Dependability & Uncertainty',
+                    'Goal Analysis'
+                ];
+                let catWeights = {};
+                let total = 0;
+                categories.forEach(cat => {
+                    let val = parseInt(document.querySelector(`[name='cat_weight_${cat}']`).value) || 0;
+                    catWeights[cat] = val;
+                    total += val;
+                });
+                if (total === 0) total = 1;
+                Object.keys(catWeights).forEach(cat => {
+                    catWeights[cat] = Math.round((catWeights[cat] / total) * 100);
+                });
+                // Get and normalise behaviour weights
+                let behaviourWeights = {
+                    normal: parseInt(document.getElementById('behaviour_weight_normal').value) || 0,
+                    unpredictable: parseInt(document.getElementById('behaviour_weight_unpredictable').value) || 0,
+                    malicious: parseInt(document.getElementById('behaviour_weight_malicious').value) || 0
+                };
+                // Do NOT normalise behaviour weights, save as entered
+                // Save to DB
+                const resp = await fetch('/trust-score-weights', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ category_weights: catWeights, behaviour_weights: behaviourWeights })
+                });
+                const msgDiv = document.getElementById('trust-score-step5-msg');
+                if (resp.ok) {
+                    msgDiv.innerHTML += '<br><span class="text-success">Trust score weights saved!</span>';
+                } else {
+                    msgDiv.innerHTML += '<br><span class="text-danger">Failed to save trust score weights.</span>';
+                }
             }
-        }
         });
         async function simulateTrustAnalyser() {
             // Always fetch all configs fresh
@@ -873,7 +903,7 @@
             const rows = document.querySelectorAll('#trust-score-step5 tbody tr');
             rows.forEach(row => {
                 const toolName = row.querySelector('td').textContent;
-                let cat = row.closest('table').parentElement.previousSibling.textContent.replace('Category:','').trim().toLowerCase();
+                let cat = row.closest('table').parentElement.previousSibling.textContent.replace('Category:', '').trim().toLowerCase();
                 let valueInput = row.querySelector(`[name="${toolName}_${cat}_value"]`);
                 let countInput = row.querySelector(`[name="${toolName}_${cat}_count"]`);
                 let value = valueInput.value;
@@ -957,16 +987,25 @@
                 let behaviours = tools.map(tool => toolBehaviours[`${tool.tool_name}|||${cat}`]);
                 let finalCatBehaviour = 'normal';
                 if (step3Cfg.override_active === 'true') {
-                    // If at least override_count tools have override_behaviour, set category behaviour to override_behaviour
+                    // Count number of tools whose behaviour matches the override behaviour
                     const count = parseInt(step3Cfg.override_count || '0');
                     const target = step3Cfg.override_behaviour || 'normal';
-                    const num = behaviours.filter(b => b === target).length;
+                    const tool_behaviour = step3Cfg.tool_behaviour || 'normal';
+                    let num = 0;
+                    tools.forEach(tool => {
+                        const key = `${tool.tool_name}|||${cat}`;
+                        if (toolBehaviours[key] === tool_behaviour) {
+                            num++;
+                            // console.log('hello '+num+tool_behaviour);
+                        }
+
+                    });
                     if (num >= count) {
                         finalCatBehaviour = target;
                     } else {
                         // If not enough for override, use majority rule
-                        const counts = {normal:0,unpredictable:0,malicious:0};
-                        behaviours.forEach(b => {counts[b] = (counts[b]||0)+1;});
+                        const counts = { normal: 0, unpredictable: 0, malicious: 0 };
+                        behaviours.forEach(b => { counts[b] = (counts[b] || 0) + 1; });
                         let max = 'normal';
                         if (counts.malicious > counts.normal && counts.malicious > counts.unpredictable) max = 'malicious';
                         else if (counts.unpredictable > counts.normal && counts.unpredictable > counts.malicious) max = 'unpredictable';
@@ -974,10 +1013,13 @@
                         else if (counts.normal === counts.unpredictable || counts.normal === counts.malicious || counts.unpredictable === counts.malicious) max = 'unpredictable';
                         finalCatBehaviour = max;
                     }
+                    // if (cat === "security"){
+                    //     console.log('hello '+num+step3Cfg.override_behaviour);
+                    // }
                 } else {
                     // Default: majority rule
-                    const counts = {normal:0,unpredictable:0,malicious:0};
-                    behaviours.forEach(b => {counts[b] = (counts[b]||0)+1;});
+                    const counts = { normal: 0, unpredictable: 0, malicious: 0 };
+                    behaviours.forEach(b => { counts[b] = (counts[b] || 0) + 1; });
                     let max = 'normal';
                     if (counts.malicious > counts.normal && counts.malicious > counts.unpredictable) max = 'malicious';
                     else if (counts.unpredictable > counts.normal && counts.unpredictable > counts.malicious) max = 'unpredictable';
@@ -997,15 +1039,31 @@
             const catBehaviours = Object.values(categoryBehaviours);
             if (step4Cfg.override_active === 'true') {
                 const count = parseInt(step4Cfg.override_count || '0');
-                const target = step4Cfg.override_behaviour || 'normal';
-                const num = catBehaviours.filter(b => b === target).length;
-                if (num >= count) systemBehaviour = target;
+                const target = step4Cfg.final_behaviour || 'normal';
+                const category_behaviour = step4Cfg.override_behaviour || 'normal';
+                const num = catBehaviours.filter(b => b === category_behaviour).length;
+                if (num >= count) {
+                    systemBehaviour = target;
+                } else {
+                    // If override not applicable, use majority behaviour
+                    const counts = { normal: 0, unpredictable: 0, malicious: 0 };
+                    catBehaviours.forEach(b => { counts[b] = (counts[b] || 0) + 1; });
+                    let max = 'normal';
+                    if (counts.malicious > counts.normal && counts.malicious > counts.unpredictable) max = 'malicious';
+                    else if (counts.unpredictable > counts.normal && counts.unpredictable > counts.malicious) max = 'unpredictable';
+                    else if (counts.normal > counts.unpredictable && counts.normal > counts.malicious) max = 'normal';
+                    else if (counts.normal === counts.unpredictable || counts.normal === counts.malicious || counts.unpredictable === counts.malicious) max = 'unpredictable';
+                    systemBehaviour = max;
+                }
             } else {
-                const counts = {normal:0,unpredictable:0,malicious:0};
-                catBehaviours.forEach(b => {counts[b] = (counts[b]||0)+1;});
+                // No override, use majority behaviour
+                const counts = { normal: 0, unpredictable: 0, malicious: 0 };
+                catBehaviours.forEach(b => { counts[b] = (counts[b] || 0) + 1; });
                 let max = 'normal';
                 if (counts.malicious > counts.normal && counts.malicious > counts.unpredictable) max = 'malicious';
                 else if (counts.unpredictable > counts.normal && counts.unpredictable > counts.malicious) max = 'unpredictable';
+                else if (counts.normal > counts.unpredictable && counts.normal > counts.malicious) max = 'normal';
+                else if (counts.normal === counts.unpredictable || counts.normal === counts.malicious || counts.unpredictable === counts.malicious) max = 'unpredictable';
                 systemBehaviour = max;
             }
             // Show results
@@ -1023,10 +1081,11 @@
                 html += `<li>${cat}: <b>${behaviour}</b></li>`;
             });
             window.simulatedCategoryBehaviours = categoryBehaviours;
-            html += `</ul><b>System Behaviour (Step 4):</b> <span class="badge bg-${systemBehaviour==='normal'?'success':systemBehaviour==='unpredictable'?'warning':'danger'}">${systemBehaviour.toUpperCase()}</span>`;
+            window.simulatedToolBehaviours = toolBehaviours;
+            html += `</ul><b>System Behaviour (Step 4):</b> <span class="badge bg-${systemBehaviour === 'normal' ? 'success' : systemBehaviour === 'unpredictable' ? 'warning' : 'danger'}">${systemBehaviour.toUpperCase()}</span>`;
             document.getElementById('trust-simulation-result').innerHTML = html;
         }
-        document.getElementById('trust-score-config').addEventListener('click', function(e) {
+        document.getElementById('trust-score-config').addEventListener('click', function (e) {
             if (e.target && e.target.id === 'simulateTrustBtn') {
                 document.getElementById('trust-simulation-result').innerHTML = '';
                 simulateTrustAnalyser();
@@ -1048,70 +1107,67 @@
             html += '<button class="btn btn-secondary mt-2" id="normaliseWeightsBtn">Normalise Weights</button>';
             html += '<hr><h5>Tool Inputs for Simulation</h5>';
             html += '<div id="tool-inputs-panel"></div>';
-        document.getElementById('trust-score-config-weights').addEventListener('click', function(e) {
-            if (e.target && e.target.id === 'normaliseWeightsBtn') {
-                normaliseCategoryWeights();
-            }
-        });
+            document.getElementById('trust-score-config-weights').addEventListener('click', function (e) {
+                if (e.target && e.target.id === 'normaliseWeightsBtn') {
+                    normaliseCategoryWeights();
+                }
+            });
 
-        function normaliseCategoryWeights() {
-            const categories = [
-                'Security',
-                'Reliability',
-                'Resilience',
-                'Dependability & Uncertainty',
-                'Goal Analysis'
-            ];
-            let total = 0;
-            let weights = {};
-            categories.forEach(cat => {
-                let val = parseInt(document.querySelector(`[name='cat_weight_${cat}']`).value) || 0;
-                weights[cat] = val;
-                total += val;
-            });
-            if (total === 0) total = 1;
-            categories.forEach(cat => {
-                let norm = Math.round((weights[cat] / total) * 100);
-                document.querySelector(`[name='cat_weight_${cat}']`).value = norm;
-                document.getElementById(`cat_weight_${cat}_val`).textContent = norm;
-            });
-        }
+            function normaliseCategoryWeights() {
+                const categories = [
+                    'Security',
+                    'Reliability',
+                    'Resilience',
+                    'Dependability & Uncertainty',
+                    'Goal Analysis'
+                ];
+                let total = 0;
+                let weights = {};
+                categories.forEach(cat => {
+                    let val = parseInt(document.querySelector(`[name='cat_weight_${cat}']`).value) || 0;
+                    weights[cat] = val;
+                    total += val;
+                });
+                if (total === 0) total = 1;
+                categories.forEach(cat => {
+                    let norm = Math.round((weights[cat] / total) * 100);
+                    document.querySelector(`[name='cat_weight_${cat}']`).value = norm;
+                    document.getElementById(`cat_weight_${cat}_val`).textContent = norm;
+                });
+            }
             html += '<b>Assign weights for behaviour types:</b><br>';
             html += `<div class="mb-2">Normal: <input type="number" min="0" max="100" value="100" name="behaviour_weight_normal" id="behaviour_weight_normal" class="form-control d-inline w-auto" oninput="window.behaviourWeightNormal=this.value"></div>`;
             html += `<div class="mb-2">Unpredictable: <input type="number" min="0" max="100" value="50" name="behaviour_weight_unpredictable" id="behaviour_weight_unpredictable" class="form-control d-inline w-auto" oninput="window.behaviourWeightUnpredictable=this.value"></div>`;
             html += `<div class="mb-2">Malicious: <input type="number" min="0" max="100" value="0" name="behaviour_weight_malicious" id="behaviour_weight_malicious" class="form-control d-inline w-auto" oninput="window.behaviourWeightMalicious=this.value"></div>`;
             document.getElementById('trust-score-config-weights').innerHTML = html;
         }
-        document.getElementById('tool-config-tab').addEventListener('shown.bs.tab', function() {
+        document.getElementById('tool-config-tab').addEventListener('shown.bs.tab', function () {
             renderToolConfigStep5();
             renderTrustScoreConfig();
             setupToolInputPanel();
-        function setupToolInputPanel() {
-            const panel = document.getElementById('tool-inputs-panel');
-            panel.innerHTML = '';
-            let toolInputs = [];
-            function renderInputs() {
+            function setupToolInputPanel() {
+                const panel = document.getElementById('tool-inputs-panel');
                 panel.innerHTML = '';
-                toolInputs.forEach((input, idx) => {
-                    panel.innerHTML += `<div class="mb-2 border p-2 rounded">
-                        <label>Tool Name:</label> <input type="text" class="form-control d-inline w-auto" value="${input.tool_name||''}" onchange="this.parentElement.parentElement.toolInputs[${idx}].tool_name=this.value">
-                        <label>Category:</label> <input type="text" class="form-control d-inline w-auto" value="${input.category||''}" onchange="this.parentElement.parentElement.toolInputs[${idx}].category=this.value">
-                        <label>Value:</label> <input type="text" class="form-control d-inline w-auto" value="${input.value||''}" onchange="this.parentElement.parentElement.toolInputs[${idx}].value=this.value">
-                        <label>Count:</label> <input type="number" min="1" class="form-control d-inline w-auto" value="${input.count||1}" onchange="this.parentElement.parentElement.toolInputs[${idx}].count=this.value">
+                let toolInputs = [];
+                function renderInputs() {
+                    panel.innerHTML = '';
+                    toolInputs.forEach((input, idx) => {
+                        panel.innerHTML += `<div class="mb-2 border p-2 rounded">
+                        <label>Tool Name:</label> <input type="text" class="form-control d-inline w-auto" value="${input.tool_name || ''}" onchange="this.parentElement.parentElement.toolInputs[${idx}].tool_name=this.value">
+                        <label>Category:</label> <input type="text" class="form-control d-inline w-auto" value="${input.category || ''}" onchange="this.parentElement.parentElement.toolInputs[${idx}].category=this.value">
+                        <label>Value:</label> <input type="text" class="form-control d-inline w-auto" value="${input.value || ''}" onchange="this.parentElement.parentElement.toolInputs[${idx}].value=this.value">
+                        <label>Count:</label> <input type="number" min="1" class="form-control d-inline w-auto" value="${input.count || 1}" onchange="this.parentElement.parentElement.toolInputs[${idx}].count=this.value">
                         <button class="btn btn-sm btn-danger ms-2" onclick="this.parentElement.parentElement.toolInputs.splice(${idx},1);this.parentElement.parentElement.renderInputs();">Remove</button>
                     </div>`;
-                });
+                    });
+                    panel.toolInputs = toolInputs;
+                    panel.renderInputs = renderInputs;
+                }
                 panel.toolInputs = toolInputs;
                 panel.renderInputs = renderInputs;
-            }
-            panel.toolInputs = toolInputs;
-            panel.renderInputs = renderInputs;
-            renderInputs();
-            document.getElementById('addToolInputBtn').onclick = function() {
-                toolInputs.push({tool_name:'',category:'',value:'',count:1});
                 renderInputs();
-            };
-        }
+                // Removed 'Add Tool Input' button logic to prevent error
+            }
         });
         async function calcTrustScore() {
             // Get category weights
@@ -1143,39 +1199,73 @@
             // Use previously simulated categoryBehaviours if available
             let categoryBehaviours = window.simulatedCategoryBehaviours || {};
             // 4. Trust Score Calculation
-            // Normalize behaviour weights if sum > 100
-            let behTotal = behaviourWeights.normal + behaviourWeights.unpredictable + behaviourWeights.malicious;
-            if (behTotal > 100) {
-                Object.keys(behaviourWeights).forEach(b => {
-                    behaviourWeights[b] = Math.round((behaviourWeights[b] / behTotal) * 100);
+            // TODO: Normalize behaviour weights if sum > 100
+            // let behTotal = behaviourWeights.normal + behaviourWeights.unpredictable + behaviourWeights.malicious;
+            // if (behTotal > 100) {
+            //     Object.keys(behaviourWeights).forEach(b => {
+            //         behaviourWeights[b] = Math.round((behaviourWeights[b] / behTotal) * 100);
+            //     });
+            // }
+            // Get mapped tools for each category
+            let mapped = window.simulatedMappedTools || [];
+            if (!mapped.length && window.lastSimulatedMapped) mapped = window.lastSimulatedMapped;
+            // If not available, fetch from simulation panel
+            if (!mapped.length) {
+                mapped = [];
+                const rows = document.querySelectorAll('#trust-score-step5 tbody tr');
+                rows.forEach(row => {
+                    const toolName = row.querySelector('td').textContent;
+                    let cat = row.closest('table').parentElement.previousSibling.textContent.replace('Category:', '').trim();
+                    mapped.push({ tool_name: toolName, trust_evaluation_category: cat });
                 });
             }
-            let score = 0;
+            // Calculate max possible score
+            let maxScore = 0;
+            let realScore = 0;
             let details = '<b>Trust Score Calculation:</b><ul>';
             categories.forEach(cat => {
                 let catKey = cat.trim().toLowerCase();
-                // Try matching categoryBehaviours by lowercased key
-                let behaviour = categoryBehaviours[catKey] || categoryBehaviours[cat] || 'normal';
                 let catWeight = catWeights[cat];
-                let behWeight = behaviourWeights[behaviour];
-                if (behWeight === undefined) {
-                    details += `<li class='text-danger'>${cat}: Behaviour '${behaviour}' not found in weights! Using 0.</li>`;
-                    behWeight = 0;
-                }
-                let partial = (catWeight * behWeight) / 100;
-                score += partial;
-                details += `<li>${cat}: Weight=${catWeight}, Behaviour=${behaviour}, Behaviour Weight=${behWeight}, Partial=${partial.toFixed(2)}</li>`;
+                // Get all tools in this category
+                let toolsInCat = mapped.filter(t => (t.trust_evaluation_category || '').trim().toLowerCase() === catKey);
+                let numTools = toolsInCat.length;
+                // Find highest behaviour weight
+                let maxBehWeight = Math.max(...Object.values(behaviourWeights));
+                let catMax = numTools * maxBehWeight * catWeight;
+                maxScore += catMax;
+                // Calculate real score for this category by summing individual tool behaviour weights
+                let partial = 0;
+                toolsInCat.forEach(tool => {
+                    let key = `${tool.tool_name}|||${catKey}`;
+                    let behaviour = (window.simulatedToolBehaviours && window.simulatedToolBehaviours[key]) || 'normal';
+                    let behWeight = behaviourWeights[behaviour];
+                    if (behWeight === undefined) {
+                        details += `<li class='text-danger'>${cat}: Tool ${tool.tool_name} behaviour '${behaviour}' not found in weights! Using 0.</li>`;
+                        behWeight = 0;
+                    }
+                    partial += behWeight * catWeight;
+                    details += `<li>${cat}: Tool=${tool.tool_name}, CatWeight=${catWeight}, Behaviour=${behaviour}, Behaviour Weight=${behWeight}, Partial=${(behWeight * catWeight).toFixed(2)}</li>`;
+                });
+                realScore += partial;
+                details += `<li><b>${cat} Total: ${partial.toFixed(2)} / Max: ${catMax}</b></li>`;
             });
-            details += `</ul><b>Final Trust Score: <span class="badge bg-info">${score.toFixed(2)}</span></b>`;
+            let percent = maxScore > 0 ? (realScore / maxScore) * 100 : 0;
+            details += `</ul><b>Final Trust Score: <span class="badge bg-info">${realScore.toFixed(2)}</span> / Max: <span class="badge bg-secondary">${maxScore.toFixed(2)}</span> (<span class="badge bg-success">${percent.toFixed(2)}%</span>)</b>`;
             document.getElementById('trust-score-result').innerHTML = details;
+
+            await fetch('/trust-score-weights', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ category_weights: catWeights, behaviour_weights: behaviourWeights })
+            });
         }
-        document.getElementById('trust-config').addEventListener('click', function(e) {
+        document.getElementById('trust-config').addEventListener('click', function (e) {
             if (e.target && e.target.id === 'calcTrustScoreBtn') {
                 calcTrustScore();
             }
         });
         // Also connect button directly in case it's outside trust-config
-        document.getElementById('calcTrustScoreBtn').addEventListener('click', function() {
+        document.getElementById('calcTrustScoreBtn').addEventListener('click', function () {
             calcTrustScore();
         });
         function renderMappedRequestsTable(mappedRequests) {
@@ -1209,4 +1299,5 @@
         }
     </script>
 </body>
+
 </html>
