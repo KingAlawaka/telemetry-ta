@@ -1,3 +1,24 @@
+# Restore ToolData and MapRequest class definitions
+from pydantic import BaseModel
+from typing import Optional
+
+class ToolData(BaseModel):
+    tool_name: str
+    time_stamp: str
+    payload: dict
+
+class MapRequest(BaseModel):
+    tool_name: str
+    description: Optional[str] = None
+    data_type: str
+    trust_evaluation_category: Optional[str] = None
+    categories: Optional[str] = None
+    min_value: Optional[float] = None
+    max_value: Optional[float] = None
+    unique_id_path: str
+    unique_id_value: Optional[str] = None
+    value_path: str
+    supplement: Optional[str] = None
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, FileResponse
@@ -117,43 +138,221 @@ def dashboard():
 # Serve static files (if needed for CSS/JS)
 app.mount("/static", StaticFiles(directory=os.path.join(os.path.dirname(os.path.abspath(__file__)), "../webapp/static")), name="static")
 
-class ToolData(BaseModel):
-    tool_name: str
-    time_stamp: str
-    payload: dict
 
-class MapRequest(BaseModel):
-    tool_name: str
-    description: Optional[str] = None
-    data_type: str
-    trust_evaluation_category: Optional[str] = None
-    categories: Optional[str] = None
-    min_value: Optional[float] = None
-    max_value: Optional[float] = None
-    unique_id_path: str
-    unique_id_value: Optional[str] = None
-    value_path: str
-    supplement: Optional[str] = None
-
+# --- Trust Score and Behaviour Calculation Logic ---
+def calculate_trust_score_and_behaviour(tool, payload):
+    # Fetch all configs
+    step1 = list(TRUST_CONFIG_STEP1_COLLECTION.find({}))
+    step2 = list(TRUST_CONFIG_STEP2_COLLECTION.find({}))
+    step3 = list(TRUST_CONFIG_STEP3_COLLECTION.find({}))
+    step4 = TRUST_CONFIG_STEP4_COLLECTION.find_one({}) or {}
+    step5 = list(TOOL_CONFIG_STEP5_COLLECTION.find({}))
+    weights = TRUST_SCORE_WEIGHTS_COLLECTION.find_one({}) or {
+        'category_weights': {
+            'Security': 20,
+            'Reliability': 20,
+            'Resilience': 20,
+            'Dependability & Uncertainty': 20,
+            'Goal Analysis': 20
+        },
+        'behaviour_weights': {
+            'normal': 100,
+            'unpredictable': 50,
+            'malicious': 0
+        }
+    }
+    cat = (tool.get('trust_evaluation_category') or 'Uncategorized').strip()
+    cat_key = cat.lower()
+    tool_name = tool.get('tool_name')
+    key = f"{tool_name}|||{cat_key}"
+    step1_map = {f"{cfg.get('tool_name')}|||{(cfg.get('trust_evaluation_category') or 'Uncategorized').strip().lower()}": cfg for cfg in step1}
+    step2_map = {f"{cfg.get('tool_name')}|||{(cfg.get('trust_evaluation_category') or 'Uncategorized').strip().lower()}": cfg for cfg in step2}
+    step3_map = {(cfg.get('trust_evaluation_category') or 'Uncategorized').strip().lower(): cfg for cfg in step3}
+    step5_map = {f"{cfg.get('tool_name')}|||{(cfg.get('trust_evaluation_category') or 'Uncategorized').strip().lower()}": cfg for cfg in step5}
+    value_path = tool.get('value_path')
+    value = get_by_path(payload, value_path) if value_path else None
+    print(value)
+    count = tool.get('count', 1)
+    # 1. Tool Impact Categorisation
+    impact = 'Low'
+    step1_cfg = step1_map.get(key, {})
+    step2_cfg = step2_map.get(key, {})
+    if step2_cfg.get('override_active') == 'true' and count >= int(step2_cfg.get('override_count', '0')):
+        impact = step2_cfg.get('override_impact', 'Low')
+    else:
+        if tool.get('data_type') == 'binary':
+            impact = step1_cfg.get(f"{tool_name}_{cat_key}_on" if value == 'ON' else f"{tool_name}_{cat_key}_off", 'Low')
+            print(impact)
+        elif tool.get('data_type') == 'categorical':
+            impact = step1_cfg.get(f"{tool_name}_{cat_key}_{value}", 'Low')
+        elif tool.get('data_type') == 'continuous':
+            val = float(value or tool.get('min_value', 0))
+            lower = float(step1_cfg.get(f"{tool_name}_{cat_key}_slider_lower", tool.get('min_value', 0)))
+            upper = float(step1_cfg.get(f"{tool_name}_{cat_key}_slider_upper", tool.get('max_value', 100)))
+            if val <= lower:
+                impact = 'Low'
+            elif val <= upper:
+                impact = 'Mid'
+            else:
+                impact = 'High'
+    # 2. Tool Behaviour
+    behaviour = 'normal'
+    if step2_cfg.get('override_active') == 'true' and count >= int(step2_cfg.get('override_count', '0')):
+        behaviour = step2_cfg.get('override_behaviour', 'normal')
+    else:
+        if impact == 'Low':
+            behaviour = 'normal'
+        elif impact == 'Mid':
+            behaviour = 'unpredictable'
+        else:
+            behaviour = 'malicious'
+    # 3. Category Behaviour
+    step3_cfg = step3_map.get(cat_key, {})
+    mapped_tools = list(mapped_collection.find({'trust_evaluation_category': cat}))
+    tool_behaviours = []
+    for t in mapped_tools:
+        t_key = f"{t.get('tool_name')}|||{cat_key}"
+        if t.get('tool_name') == tool_name:
+            tb = behaviour
+        else:
+            last = db['tool_behaviour_results'].find_one({'tool_name': t.get('tool_name'), 'trust_evaluation_category': cat})
+            tb = last['behaviour'] if last else 'normal'
+        tool_behaviours.append(tb)
+    final_cat_behaviour = 'normal'
+    if step3_cfg.get('override_active') == 'true':
+        count_override = int(step3_cfg.get('override_count', '0'))
+        target = step3_cfg.get('override_behaviour', 'normal')
+        tool_behaviour = step3_cfg.get('tool_behaviour', 'normal')
+        num = sum(1 for b in tool_behaviours if b == tool_behaviour)
+        if num >= count_override:
+            final_cat_behaviour = target
+        else:
+            counts = {b: tool_behaviours.count(b) for b in ['normal', 'unpredictable', 'malicious']}
+            max_beh = max(counts, key=counts.get)
+            final_cat_behaviour = max_beh
+    else:
+        counts = {b: tool_behaviours.count(b) for b in ['normal', 'unpredictable', 'malicious']}
+        max_beh = max(counts, key=counts.get)
+        if list(counts.values()).count(max(counts.values())) > 1:
+            final_cat_behaviour = 'unpredictable'
+        else:
+            final_cat_behaviour = max_beh
+    # 4. System Behaviour
+    step4_cfg = step4 or {}
+    all_cat_behaviours = []
+    all_cats = TRUST_CONFIG_STEP3_COLLECTION.find({})
+    print("step 4",all_cats)
+    for c_cfg in all_cats:
+        print("step 4",c_cfg)
+        cat_name = c_cfg.get('trust_evaluation_category')
+        last_cat = db['category_behaviour_results'].find_one({'trust_evaluation_category': cat_name})
+        b = last_cat['behaviour'] if last_cat else 'normal'
+        if cat_name == cat:
+            b = final_cat_behaviour
+        all_cat_behaviours.append(b)
+    system_behaviour = 'normal'
+    if step4_cfg.get('override_active') == 'true':
+        count_override = int(step4_cfg.get('override_count', '0'))
+        target = step4_cfg.get('final_behaviour', 'normal')
+        print("step 4",target)
+        category_behaviour = step4_cfg.get('override_behaviour', 'normal')
+        print("step 4",category_behaviour)
+        num = all_cat_behaviours.count(category_behaviour)
+        print("step 4",all_cat_behaviours)
+        print("step 4",num)
+        if num >= count_override:
+            system_behaviour = target
+        else:
+            counts = {b: all_cat_behaviours.count(b) for b in ['normal', 'unpredictable', 'malicious']}
+            max_beh = max(counts, key=counts.get)
+            system_behaviour = max_beh
+    else:
+        counts = {b: all_cat_behaviours.count(b) for b in ['normal', 'unpredictable', 'malicious']}
+        max_beh = max(counts, key=counts.get)
+        system_behaviour = max_beh
+    behaviour_weights = weights.get('behaviour_weights', {'normal': 100, 'unpredictable': 50, 'malicious': 0})
+    cat_weights = weights.get('category_weights', {})
+    cat_weight = cat_weights.get(cat, 20)
+    beh_weight = behaviour_weights.get(behaviour, 100)
+    max_beh_weight = max(behaviour_weights.values())
+    max_score = max_beh_weight * cat_weight
+    real_score = beh_weight * cat_weight
+    percent = (real_score / max_score) * 100 if max_score > 0 else 0
+    return {
+        'tool_name': tool_name,
+        'trust_evaluation_category': cat,
+        'unique_id_value': get_by_path(payload, tool.get('unique_id_path', '')),
+        'value': value,
+        'count': count,
+        'impact': impact,
+        'behaviour': behaviour,
+        'category_behaviour': final_cat_behaviour,
+        'system_behaviour': system_behaviour,
+        'trust_score': real_score,
+        'max_score': max_score,
+        'percent': percent
+    }
 
 @app.post("/submit")
 async def submit_data(data: ToolData):
     doc = data.dict()
     mapped = list(mapped_collection.find({}))
-    matched = False
+    results = []
     for m in mapped:
         unique_id_path = m.get("unique_id_path", "")
         mapped_unique_id_value = m.get("unique_id_value", None)
         new_unique_id_value = get_by_path(data.payload, unique_id_path)
-        print(f"Comparing new: {new_unique_id_value} with mapped: {mapped_unique_id_value} at path: {unique_id_path}")
         if unique_id_path and mapped_unique_id_value is not None and new_unique_id_value is not None:
             if str(new_unique_id_value) == str(mapped_unique_id_value):
-                mapped_collection.update_one({"_id": m["_id"]}, {"$inc": {"count": 1}})
-                matched = True
-    if not matched:
-        result = collection.insert_one(doc)
-        return {"inserted_id": str(result.inserted_id), "mapped": False}
-    return {"mapped": True}
+                # Calculate trust score and behaviour
+                res = calculate_trust_score_and_behaviour(m, data.payload)
+                # Save tool behaviour result
+                db['tool_behaviour_results'].update_one(
+                    {'tool_name': res['tool_name'], 'trust_evaluation_category': res['trust_evaluation_category']},
+                    {'$set': {'behaviour': res['behaviour'], 'unique_id_value': res['unique_id_value'], 'value': res['value'], 'count': res['count']}},
+                    upsert=True
+                )
+                # Save category behaviour result
+                db['category_behaviour_results'].update_one(
+                    {'trust_evaluation_category': res['trust_evaluation_category']},
+                    {'$set': {'behaviour': res['category_behaviour']}},
+                    upsert=True
+                )
+                # Save trust score result
+                db['trust_score_results'].update_one(
+                    {'tool_name': res['tool_name'], 'trust_evaluation_category': res['trust_evaluation_category']},
+                    {'$set': {'trust_score': res['trust_score'], 'max_score': res['max_score'], 'percent': res['percent']}},
+                    upsert=True
+                )
+                # Save system behaviour result
+                db['system_behaviour_result'].update_one(
+                    {}, {'$set': {'system_behaviour': res['system_behaviour']}}, upsert=True)
+                results.append(res)
+    collection.insert_one(doc)
+    return {"status": "ok", "results": results}
+
+# Endpoint to get all trust scores and behaviour categorisations
+@app.get("/dashboard/trust-scores")
+async def get_dashboard_trust_scores():
+    def safe_serialize(doc):
+        doc = dict(doc)
+        if '_id' in doc:
+            doc['_id'] = str(doc['_id'])
+        return doc
+    scores = [safe_serialize(d) for d in db['trust_score_results'].find({})]
+    behaviours = [safe_serialize(d) for d in db['tool_behaviour_results'].find({})]
+    cat_behaviours = [safe_serialize(d) for d in db['category_behaviour_results'].find({})]
+    return JSONResponse({
+        "trust_scores": scores,
+        "tool_behaviours": behaviours,
+        "category_behaviours": cat_behaviours
+    })
+
+# Endpoint to get current system behaviour
+@app.get("/dashboard/system-behaviour")
+async def get_dashboard_system_behaviour():
+    res = db['system_behaviour_result'].find_one({})
+    return JSONResponse({"system_behaviour": res.get('system_behaviour', 'normal') if res else 'normal'})
 
 @app.get("/data")
 async def get_data():

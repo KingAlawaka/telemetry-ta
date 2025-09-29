@@ -1,0 +1,39 @@
+version: '3.8'
+services:
+  mongo:
+    platform: linux/amd64
+    image: mongo:6.0
+    container_name: telemetry-mongo
+    restart: always
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_DATABASE: telemetry
+    volumes:
+      - mongo-data:/data/db
+
+  api:
+    platform: linux/amd64
+    image: kingalawaka/telemetry-api:latest
+    container_name: telemetry-api
+    restart: always
+    ports:
+      - "8001:8001"
+    environment:
+      MONGO_URI: mongodb://mongo:27017/
+      DB_NAME: telemetry
+    depends_on:
+      - mongo
+
+  webapp:
+    platform: linux/amd64
+    image: kingalawaka/telemetry-webapp:latest
+    container_name: telemetry-webapp
+    restart: always
+    ports:
+      - "8080:80"
+    depends_on:
+      - api
+
+volumes:
+  mongo-data:

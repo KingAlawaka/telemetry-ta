@@ -4,3 +4,6 @@ python3 -c "from pymongo import MongoClient; c=MongoClient('mongodb://localhost:
 --run server
 uvicorn api.main:app --reload --host 0.0.0.0 --port 8001
 uvicorn fastapi_sender:app --reload
+
+ssh pass
+zrx57u6h3

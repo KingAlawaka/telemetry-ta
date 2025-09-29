@@ -4,48 +4,34 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Telemetry Dashboard</title>
+    <title>Trust Analyser Dashboard</title>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
     <style>
-        .json-collapsed {
-            display: none;
-        }
-
-        .json-expanded {
-            display: block;
-        }
-
-        .pointer {
-            cursor: pointer;
-        }
-
-        .json-tree {
-            font-family: monospace;
-            font-size: 0.95em;
-        }
-
-        .json-key {
-            color: #007bff;
-            cursor: pointer;
-        }
-
-        .json-leaf {
-            color: #333;
-            cursor: pointer;
-        }
-
-        .json-branch {
-            margin-left: 1em;
-        }
+        .json-collapsed { display: none; }
+        .json-expanded { display: block; }
+        .pointer { cursor: pointer; }
+        .json-tree { font-family: monospace; font-size: 0.95em; }
+        .json-key { color: #007bff; cursor: pointer; }
+        .json-leaf { color: #333; cursor: pointer; }
+        .json-branch { margin-left: 1em; }
+        /* Make dial canvases and containers smaller */
+    .dial-canvas { width: 100px !important; height: 100px !important; display: block; margin: 0 auto; }
+        .card.p-3 { padding: 0.5rem !important; }
+        .card h5 { font-size: 1rem; margin-bottom: 0.5rem; }
+        .list-group { font-size: 0.85em; }
     </style>
 </head>
 
 <body>
     <div class="container mt-5">
-        <h1>Telemetry Dashboard</h1>
+        <h1>Trust Analyser Dashboard</h1>
         <ul class="nav nav-tabs" id="dashboardTabs" role="tablist">
             <li class="nav-item" role="presentation">
-                <button class="nav-link active" id="requests-tab" data-bs-toggle="tab" data-bs-target="#requests"
+                <button class="nav-link active" id="main-dashboard-tab" data-bs-toggle="tab" data-bs-target="#main-dashboard"
+                    type="button" role="tab">Main Dashboard</button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="requests-tab" data-bs-toggle="tab" data-bs-target="#requests"
                     type="button" role="tab">Requests</button>
             </li>
             <li class="nav-item" role="presentation">
@@ -62,6 +48,12 @@
             </li>
         </ul>
         <div class="tab-content" id="dashboardTabsContent">
+            <div class="tab-pane fade show active" id="main-dashboard" role="tabpanel">
+                <div class="container mt-4">
+                    <h3>Trust Score Dashboard</h3>
+                    <div id="trust-score-dashboard"></div>
+                </div>
+            </div>
             <div class="tab-pane fade show active" id="requests" role="tabpanel">
                 <div class="d-flex justify-content-end mt-3 mb-2">
                     <button class="btn btn-outline-primary btn-sm" onclick="manualRefresh()">Refresh</button>
@@ -82,22 +74,22 @@
             </div>
             <div class="tab-pane fade" id="trust-config" role="tabpanel">
                 <div class="mt-4">
-                    <h4>Step 1: Configure Impact Levels for Each Tool and Trust Evaluation Category</h4>
+                    <h4>Configuration 1: Impact Levels for Each Tool and Trust Evaluation Category</h4>
                     <div id="trust-config-step1"></div>
                     <button class="btn btn-success mt-3" id="saveTrustConfigBtn">Save Step 1 Configuration</button>
                     <div id="trust-config-save-msg" class="mt-2"></div>
                     <hr>
-                    <h4 class="mt-5">Step 2: Tool Behaviour Configuration</h4>
+                    <h4 class="mt-5">Configuration 2: Tool Behaviour Configuration</h4>
                     <div id="trust-config-step2"></div>
                     <button class="btn btn-primary mt-3" id="saveTrustConfigStep2Btn">Save Step 2 Configuration</button>
                     <div id="trust-config-step2-msg" class="mt-2"></div>
                     <hr>
-                    <h4 class="mt-5">Step 3: Category Behaviour Configuration</h4>
+                    <h4 class="mt-5"> </h4>
                     <div id="trust-config-step3"></div>
                     <button class="btn btn-warning mt-3" id="saveTrustConfigStep3Btn">Save Step 3 Configuration</button>
                     <div id="trust-config-step3-msg" class="mt-2"></div>
                     <hr>
-                    <h4 class="mt-5">Step 4: System Behaviour Configuration</h4>
+                    <h4 class="mt-5"> </h4>
                     <div id="trust-config-step4"></div>
                     <button class="btn btn-danger mt-3" id="saveTrustConfigStep4Btn">Save Step 4 Configuration</button>
                     <div id="trust-config-step4-msg" class="mt-2"></div>
@@ -143,7 +135,94 @@
         </div>
     </div>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.3.0/dist/chart.umd.min.js"></script>
     <script>
+        // --- Main Dashboard Logic ---
+        async function renderTrustScoreDashboard() {
+            // ...existing code for dashboard rendering...
+            const resp = await fetch('/dashboard/trust-scores');
+            const data = await resp.json();
+            const sysResp = await fetch('/dashboard/system-behaviour');
+            const sysData = await sysResp.json();
+            const trustScores = data.trust_scores || [];
+            const toolBehaviours = data.tool_behaviours || [];
+            const categoryBehaviours = data.category_behaviours || [];
+            const systemBehaviour = sysData.system_behaviour || 'normal';
+            // Prepare category-wise trust scores
+            let catScores = {};
+            trustScores.forEach(ts => {
+                const cat = (ts.trust_evaluation_category || 'Uncategorized').trim();
+                if (!catScores[cat]) catScores[cat] = [];
+                catScores[cat].push(ts);
+            });
+            // Prepare tool behaviour map
+            let toolBehMap = {};
+            toolBehaviours.forEach(tb => {
+                const key = `${tb.tool_name}|||${tb.trust_evaluation_category}`;
+                toolBehMap[key] = tb.behaviour;
+            });
+            // Prepare category behaviour map
+            let catBehMap = {};
+            categoryBehaviours.forEach(cb => {
+                catBehMap[cb.trust_evaluation_category] = cb.behaviour;
+            });
+            // UI
+            let html = '<div class="row">';
+            Object.entries(catScores).forEach(([cat, scores], idx) => {
+                html += `<div class="col-md-4 mb-4"><div class="card p-3"><h5>${cat}</h5><canvas id="catDial${idx}" width="100" height="100" class="dial-canvas"></canvas>`;
+                html += `<div>Behaviour: <span class="badge bg-${catBehMap[cat]==='normal'?'success':catBehMap[cat]==='unpredictable'?'warning':'danger'}">${(catBehMap[cat]||'normal').toUpperCase()}</span></div>`;
+                html += '<ul class="list-group mt-2">';
+                scores.forEach(ts => {
+                    const beh = toolBehMap[`${ts.tool_name}|||${ts.trust_evaluation_category}`] || 'normal';
+                    html += `<li class="list-group-item d-flex justify-content-between align-items-center">${ts.tool_name}<span class="badge bg-${beh==='normal'?'success':beh==='unpredictable'?'warning':'danger'}">${beh}</span><span class="ms-2">Score: ${ts.trust_score.toFixed(2)} / ${ts.max_score.toFixed(2)} (${ts.percent.toFixed(2)}%)</span></li>`;
+                });
+                html += '</ul></div></div>';
+            });
+            html += `<div class="col-md-4 mb-4"><div class="card p-3"><h5>System Behaviour</h5><canvas id="systemDial" width="100" height="100" class="dial-canvas"></canvas><div class="mt-2"><span class="badge bg-${systemBehaviour==='normal'?'success':systemBehaviour==='unpredictable'?'warning':'danger'}" style="font-size:1.5em;">${systemBehaviour.toUpperCase()}</span></div></div></div>`;
+            html += '</div>';
+            document.getElementById('trust-score-dashboard').innerHTML = html;
+            // Render dials
+            Object.entries(catScores).forEach(([cat, scores], idx) => {
+                let percent = scores.length ? scores[0].percent : 0;
+                let ctx = document.getElementById(`catDial${idx}`).getContext('2d');
+                renderDial(ctx, percent, cat);
+            });
+            let sysCtx = document.getElementById('systemDial').getContext('2d');
+            renderDial(sysCtx, systemBehaviour==='normal'?100:systemBehaviour==='unpredictable'?50:0, 'System');
+        }
+
+        function renderDial(ctx, percent, label) {
+            new Chart(ctx, {
+                type: 'doughnut',
+                data: {
+                    labels: [label, ''],
+                    datasets: [{
+                        data: [percent, 100-percent],
+                        backgroundColor: [percent>66?'#198754':percent>33?'#ffc107':'#dc3545', '#e9ecef'],
+                        borderWidth: 0
+                    }]
+                },
+                options: {
+                    cutout: '80%',
+                    plugins: {
+                        legend: {display: false},
+                        tooltip: {enabled: false},
+                        title: {display: true, text: `${label}: ${percent.toFixed(1)}%`}
+                    }
+                }
+            });
+        }
+
+        // Tab event for main dashboard
+        document.getElementById('main-dashboard-tab').addEventListener('shown.bs.tab', function () {
+            renderTrustScoreDashboard();
+        });
+        // Initial load
+        document.addEventListener('DOMContentLoaded', function() {
+            renderTrustScoreDashboard();
+        });
+        // ...other JS functions...
+    
         async function renderTrustConfigStep2() {
             // Fetch mapped requests to get tool names
             const [mappedResp, configResp] = await Promise.all([
@@ -591,7 +670,7 @@
             function capitalizeWords(str) {
                 return str.replace(/\b\w/g, c => c.toUpperCase());
             }
-            let html = '<h4 class="mt-5">Step 3: Category Behaviour Configuration</h4>';
+            let html = '<h4 class="mt-5"> Configuration 3: Category Behaviour Configuration</h4>';
             Object.entries(byCategory).forEach(([cat, tools]) => {
                 const cfg = configMap[cat] || {};
                 const overrideActive = cfg.override_active === 'true';
@@ -685,7 +764,7 @@
             const overrideCount = cfg.override_count || '';
             const overrideBehaviour = cfg.override_behaviour || 'normal';
             const finalBehaviour = cfg.final_behaviour || 'normal';
-            let html = '<h4 class="mt-5">Step 4: System Behaviour Configuration</h4>';
+            let html = '<h4 class="mt-5"> Configuration 4: System Behaviour Configuration</h4>';
             html += `<div class="mb-4 p-3 border rounded">
         <div>Default: Majority of category behaviour will determine system behaviour.</div>
         <div class="mt-2">Override rule:
