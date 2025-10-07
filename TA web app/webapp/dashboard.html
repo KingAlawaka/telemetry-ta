@@ -47,6 +47,20 @@
                     type="button" role="tab">Trust Score Configuration</button>
             </li>
         </ul>
+                <!-- Tool Info Modal -->
+                <div class="modal fade" id="toolInfoModal" tabindex="-1" aria-labelledby="toolInfoModalLabel" aria-hidden="true">
+                    <div class="modal-dialog modal-lg">
+                        <div class="modal-content">
+                            <div class="modal-header">
+                                <h5 class="modal-title" id="toolInfoModalLabel">Tool Value Frequency & History</h5>
+                                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                            </div>
+                            <div class="modal-body">
+                                <div id="toolInfoModalContent"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
         <div class="tab-content" id="dashboardTabsContent">
             <div class="tab-pane fade show active" id="main-dashboard" role="tabpanel">
                 <div class="container mt-4">
@@ -168,27 +182,102 @@
             });
             // UI
             let html = '<div class="row">';
+            // Left: System (col-md-4)
+            html += `<div class="col-md-4 mb-4"><div class="card p-3">
+                <h5>System</h5>
+                <div class="mb-3"><b>Behaviour</b></div>
+                <div class="mb-2 d-flex align-items-center gap-2">
+                    <span id="systemOverallBehaviourLabel" class="badge" style="font-size:1em;"></span>
+                    <span id="systemRecentBehaviourLabel" class="badge" style="font-size:1em;"></span>
+                </div>
+                <div class="mt-2 d-flex justify-content-center">
+                    <canvas id="systemBehaviourPieChart" width="100" height="100"></canvas>
+                </div>
+                <div class="mt-4"><b>Trust Score</b></div>
+                <canvas id="systemScoreChart" width="400" height="200" style="margin-top:1em;"></canvas>
+            </div></div>`;
+            // Right: Categories (col-md-8)
+            html += '<div class="col-md-8"><div class="row">';
             Object.entries(catScores).forEach(([cat, scores], idx) => {
-                html += `<div class="col-md-4 mb-4"><div class="card p-3"><h5>${cat}</h5><canvas id="catDial${idx}" width="100" height="100" class="dial-canvas"></canvas>`;
+                html += `<div class="col-md-6 mb-4"><div class="card p-3"><h5>${cat}</h5><canvas id="catDial${idx}" width="100" height="100" class="dial-canvas"></canvas>`;
                 html += `<div>Behaviour: <span class="badge bg-${catBehMap[cat]==='normal'?'success':catBehMap[cat]==='unpredictable'?'warning':'danger'}">${(catBehMap[cat]||'normal').toUpperCase()}</span></div>`;
                 html += '<ul class="list-group mt-2">';
                 scores.forEach(ts => {
-                    const beh = toolBehMap[`${ts.tool_name}|||${ts.trust_evaluation_category}`] || 'normal';
-                    html += `<li class="list-group-item d-flex justify-content-between align-items-center">${ts.tool_name}<span class="badge bg-${beh==='normal'?'success':beh==='unpredictable'?'warning':'danger'}">${beh}</span><span class="ms-2">Score: ${ts.trust_score.toFixed(2)} / ${ts.max_score.toFixed(2)} (${ts.percent.toFixed(2)}%)</span></li>`;
+                    const beh = toolBehMap[`${ts.tool_name}|||${cat}`] || 'normal';
+                    html += `<li class="list-group-item d-flex justify-content-between align-items-center pointer" onclick="showToolInfoModal('${ts.tool_name}','${cat}')">${ts.tool_name}<span class="badge bg-${beh==='normal'?'success':beh==='unpredictable'?'warning':'danger'}">${beh}</span></li>`;
                 });
                 html += '</ul></div></div>';
             });
-            html += `<div class="col-md-4 mb-4"><div class="card p-3"><h5>System Behaviour</h5><canvas id="systemDial" width="100" height="100" class="dial-canvas"></canvas><div class="mt-2"><span class="badge bg-${systemBehaviour==='normal'?'success':systemBehaviour==='unpredictable'?'warning':'danger'}" style="font-size:1.5em;">${systemBehaviour.toUpperCase()}</span></div></div></div>`;
+            html += '</div></div>';
             html += '</div>';
             document.getElementById('trust-score-dashboard').innerHTML = html;
+            // (Removed duplicate rendering block)
             // Render dials
             Object.entries(catScores).forEach(([cat, scores], idx) => {
                 let percent = scores.length ? scores[0].percent : 0;
                 let ctx = document.getElementById(`catDial${idx}`).getContext('2d');
                 renderDial(ctx, percent, cat);
             });
-            let sysCtx = document.getElementById('systemDial').getContext('2d');
-            renderDial(sysCtx, systemBehaviour==='normal'?100:systemBehaviour==='unpredictable'?50:0, 'System');
+            // Removed system ring/dial indicator
+            // Render system behaviour pie chart and labels
+            fetch('/system-behaviour-history-frequencies').then(resp => resp.json()).then(freqs => {
+                let pieCtx = document.getElementById('systemBehaviourPieChart').getContext('2d');
+                let labels = ['Normal', 'Unpredictable', 'Malicious'];
+                let data = [freqs.normal, freqs.unpredictable, freqs.malicious];
+                let colors = ['#198754', '#ffc107', '#dc3545'];
+                new Chart(pieCtx, {
+                    type: 'pie',
+                    data: {
+                        labels: labels,
+                        datasets: [{
+                            data: data,
+                            backgroundColor: colors
+                        }]
+                    },
+                    options: {
+                        plugins: { title: { display: true, text: 'System Behaviour History' }, legend: { position: 'bottom' } }
+                    }
+                });
+                // Set overall behaviour (most frequent)
+                let maxCount = Math.max(...data);
+                let overallIdx = data.findIndex(v => v === maxCount);
+                let overall = labels[overallIdx] || 'Normal';
+                let overallColor = colors[overallIdx] || '#198754';
+                let overallClass = overall.toLowerCase() === 'normal' ? 'bg-success' : overall.toLowerCase() === 'unpredictable' ? 'bg-warning' : 'bg-danger';
+                let overallLabel = document.getElementById('systemOverallBehaviourLabel');
+                overallLabel.textContent = `Overall: ${overall}`;
+                overallLabel.className = `badge ${overallClass}`;
+                // Set most recent behaviour
+                fetch('/dashboard/system-behaviour').then(r => r.json()).then(sysData => {
+                    let recent = sysData.system_behaviour || 'Normal';
+                    let recentClass = recent.toLowerCase() === 'normal' ? 'bg-success' : recent.toLowerCase() === 'unpredictable' ? 'bg-warning' : 'bg-danger';
+                    let recentLabel = document.getElementById('systemRecentBehaviourLabel');
+                    recentLabel.textContent = `Most Recent: ${recent.charAt(0).toUpperCase() + recent.slice(1)}`;
+                    recentLabel.className = `badge ${recentClass}`;
+                });
+            });
+            // Render system trust score history graph
+            fetch('/system-trust-score-history').then(resp => resp.json()).then(scores => {
+                let labels = scores.map((_,i) => i+1);
+                let ctx = document.getElementById('systemScoreChart').getContext('2d');
+                new Chart(ctx, {
+                    type: 'line',
+                    data: {
+                        labels: labels,
+                        datasets: [{
+                            label: 'System Trust Score History',
+                            data: scores,
+                            borderColor: '#fd7e14',
+                            backgroundColor: 'rgba(253,126,20,0.2)',
+                            fill: true
+                        }]
+                    },
+                    options: {
+                        plugins: { title: { display: true, text: 'System Trust Score History' } },
+                        scales: { y: { beginAtZero: true } }
+                    }
+                });
+            });
         }
 
         function renderDial(ctx, percent, label) {
@@ -1376,6 +1465,81 @@
                 tableBody.innerHTML += row;
             });
         }
+    </script>
+    </script>
+    <script>
+    // Show tool info modal with value frequency/history graphs
+    async function showToolInfoModal(toolName, category) {
+        const modal = new bootstrap.Modal(document.getElementById('toolInfoModal'));
+        const contentDiv = document.getElementById('toolInfoModalContent');
+        contentDiv.innerHTML = `<div class='text-center'><div class='spinner-border'></div> Loading...</div>`;
+        // Fetch mapped to get data type
+        let mappedResp = await fetch('/mapped');
+        let mapped = await mappedResp.json();
+        let tool = mapped.find(t => t.tool_name === toolName && (t.trust_evaluation_category||'').trim().toLowerCase() === category.trim().toLowerCase());
+        if (!tool) {
+            contentDiv.innerHTML = `<div class='text-danger'>Tool not found.</div>`;
+            modal.show();
+            return;
+        }
+        let html = `<h5>${toolName} (${tool.data_type}) - ${category}</h5>`;
+        if (tool.data_type === 'binary' || tool.data_type === 'categorical') {
+            let freqResp = await fetch(`/tool-value-frequency/${encodeURIComponent(toolName)}/${encodeURIComponent(category)}`);
+            let freqData = await freqResp.json();
+            let labels = Object.keys(freqData);
+            let values = Object.values(freqData);
+            html += `<canvas id='toolFreqChart' width='400' height='200'></canvas>`;
+            contentDiv.innerHTML = html;
+            setTimeout(() => {
+                let ctxFreq = document.getElementById('toolFreqChart').getContext('2d');
+                new Chart(ctxFreq, {
+                    type: 'bar',
+                    data: {
+                        labels: labels,
+                        datasets: [{
+                            label: 'Value Frequency',
+                            data: values,
+                            backgroundColor: '#0d6efd'
+                        }]
+                    },
+                    options: {
+                        plugins: { title: { display: true, text: 'Value Frequency' } },
+                        scales: { y: { beginAtZero: true } }
+                    }
+                });
+            }, 100);
+        } else if (tool.data_type === 'continuous') {
+            let histResp = await fetch(`/tool-value-history/${encodeURIComponent(toolName)}/${encodeURIComponent(category)}`);
+            let histData = await histResp.json();
+            let labels = histData.map((_,i) => i+1);
+            let values = histData;
+            html += `<canvas id='toolHistChart' width='400' height='200'></canvas>`;
+            contentDiv.innerHTML = html;
+            setTimeout(() => {
+                let ctxHist = document.getElementById('toolHistChart').getContext('2d');
+                new Chart(ctxHist, {
+                    type: 'line',
+                    data: {
+                        labels: labels,
+                        datasets: [{
+                            label: 'Value History',
+                            data: values,
+                            borderColor: '#198754',
+                            backgroundColor: 'rgba(25,135,84,0.2)',
+                            fill: true
+                        }]
+                    },
+                    options: {
+                        plugins: { title: { display: true, text: 'Value History' } },
+                        scales: { y: { beginAtZero: true } }
+                    }
+                });
+            }, 100);
+        } else {
+            contentDiv.innerHTML = `<div class='text-warning'>Unknown data type.</div>`;
+        }
+        modal.show();
+    }
     </script>
 </body>
 

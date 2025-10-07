@@ -56,6 +56,7 @@ TOOL_CONFIG_STEP5_COLLECTION = db.get_collection('tool_config_step5')
 TRUST_SCORE_WEIGHTS_COLLECTION = db.get_collection('trust_score_weights')
 # Endpoint to save trust score weights
 from fastapi import Body
+
 @app.post("/trust-score-weights")
 async def save_trust_score_weights(payload: dict = Body(...)):
     try:
@@ -64,6 +65,7 @@ async def save_trust_score_weights(payload: dict = Body(...)):
         return {"status": "success"}
     except Exception as e:
         return JSONResponse(status_code=500, content={"status": "fail", "error": str(e)})
+    
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -218,6 +220,7 @@ def calculate_trust_score_and_behaviour(tool, payload):
             last = db['tool_behaviour_results'].find_one({'tool_name': t.get('tool_name'), 'trust_evaluation_category': cat})
             tb = last['behaviour'] if last else 'normal'
         tool_behaviours.append(tb)
+    # 3. Category Behaviour (step 3)
     final_cat_behaviour = 'normal'
     if step3_cfg.get('override_active') == 'true':
         count_override = int(step3_cfg.get('override_count', '0'))
@@ -228,48 +231,62 @@ def calculate_trust_score_and_behaviour(tool, payload):
             final_cat_behaviour = target
         else:
             counts = {b: tool_behaviours.count(b) for b in ['normal', 'unpredictable', 'malicious']}
-            max_beh = max(counts, key=counts.get)
-            final_cat_behaviour = max_beh
+            max_count = max(counts.values())
+            max_behaviours = [k for k, v in counts.items() if v == max_count]
+            if len(max_behaviours) == 1:
+                final_cat_behaviour = max_behaviours[0]
+            else:
+                final_cat_behaviour = 'unpredictable'
     else:
         counts = {b: tool_behaviours.count(b) for b in ['normal', 'unpredictable', 'malicious']}
-        max_beh = max(counts, key=counts.get)
-        if list(counts.values()).count(max(counts.values())) > 1:
-            final_cat_behaviour = 'unpredictable'
+        max_count = max(counts.values())
+        max_behaviours = [k for k, v in counts.items() if v == max_count]
+        if len(max_behaviours) == 1:
+            final_cat_behaviour = max_behaviours[0]
         else:
-            final_cat_behaviour = max_beh
+            final_cat_behaviour = 'unpredictable'
     # 4. System Behaviour
     step4_cfg = step4 or {}
     all_cat_behaviours = []
     all_cats = TRUST_CONFIG_STEP3_COLLECTION.find({})
-    print("step 4",all_cats)
+    # print("step 4",all_cats)
     for c_cfg in all_cats:
-        print("step 4",c_cfg)
+        # print("step 4",c_cfg)
         cat_name = c_cfg.get('trust_evaluation_category')
-        last_cat = db['category_behaviour_results'].find_one({'trust_evaluation_category': cat_name})
+        # print("cat_name", cat_name)
+        last_cat = db['category_behaviour_results'].find_one({'trust_evaluation_category': {'$regex': f"^{cat_name}$", '$options': 'i'}})
+        # print("last_cat", db['category_behaviour_results'])
         b = last_cat['behaviour'] if last_cat else 'normal'
         if cat_name == cat:
             b = final_cat_behaviour
         all_cat_behaviours.append(b)
+    # print("all_cat_behaviours:", all_cat_behaviours)
+    # 4. System Behaviour (step 4)
     system_behaviour = 'normal'
     if step4_cfg.get('override_active') == 'true':
         count_override = int(step4_cfg.get('override_count', '0'))
         target = step4_cfg.get('final_behaviour', 'normal')
-        print("step 4",target)
         category_behaviour = step4_cfg.get('override_behaviour', 'normal')
-        print("step 4",category_behaviour)
         num = all_cat_behaviours.count(category_behaviour)
-        print("step 4",all_cat_behaviours)
-        print("step 4",num)
         if num >= count_override:
             system_behaviour = target
         else:
             counts = {b: all_cat_behaviours.count(b) for b in ['normal', 'unpredictable', 'malicious']}
-            max_beh = max(counts, key=counts.get)
-            system_behaviour = max_beh
+            max_count = max(counts.values())
+            max_behaviours = [k for k, v in counts.items() if v == max_count]
+            if len(max_behaviours) == 1:
+                system_behaviour = max_behaviours[0]
+            else:
+                system_behaviour = 'unpredictable'
     else:
         counts = {b: all_cat_behaviours.count(b) for b in ['normal', 'unpredictable', 'malicious']}
-        max_beh = max(counts, key=counts.get)
-        system_behaviour = max_beh
+        max_count = max(counts.values())
+        max_behaviours = [k for k, v in counts.items() if v == max_count]
+        if len(max_behaviours) == 1:
+            system_behaviour = max_behaviours[0]
+        else:
+            system_behaviour = 'unpredictable'
+    # 5. Trust Score Calculation
     behaviour_weights = weights.get('behaviour_weights', {'normal': 100, 'unpredictable': 50, 'malicious': 0})
     cat_weights = weights.get('category_weights', {})
     cat_weight = cat_weights.get(cat, 20)
@@ -295,41 +312,208 @@ def calculate_trust_score_and_behaviour(tool, payload):
 
 @app.post("/submit")
 async def submit_data(data: ToolData):
+    # print("Received data:", data)
     doc = data.dict()
     mapped = list(mapped_collection.find({}))
-    results = []
+    # If no mappings, just save the request for later mapping
+    if not mapped:
+        result = collection.insert_one(doc)
+        doc_copy = dict(doc)
+        doc_copy["_id"] = str(result.inserted_id)
+        return {"status": "ok", "results": "Saved for later mapping (no mappings found)", "submitted_payload": doc_copy}
+    # Update the most recent value for the submitting tool
     for m in mapped:
         unique_id_path = m.get("unique_id_path", "")
         mapped_unique_id_value = m.get("unique_id_value", None)
         new_unique_id_value = get_by_path(data.payload, unique_id_path)
         if unique_id_path and mapped_unique_id_value is not None and new_unique_id_value is not None:
             if str(new_unique_id_value) == str(mapped_unique_id_value):
+                # Save most recent value for this tool
+                db['tool_most_recent_values'].update_one(
+                    {'tool_name': m['tool_name'], 'trust_evaluation_category': m.get('trust_evaluation_category')},
+                    {'$set': {'payload': data.payload, 'time_stamp': data.time_stamp}},
+                    upsert=True
+                )
+                # Store value frequency/history
+                tool_name = m.get('tool_name')
+                cat = m.get('trust_evaluation_category')
+                data_type = m.get('data_type')
+                value_path = m.get('value_path')
+                value = get_by_path(data.payload, value_path) if value_path else None
+                freq_coll = db['tool_value_frequencies']
+                if data_type in ['binary', 'categorical']:
+                    freq_coll.update_one(
+                        {'tool_name': tool_name, 'trust_evaluation_category': cat, 'value': value},
+                        {'$inc': {'count': 1}},
+                        upsert=True
+                    )
+                elif data_type == 'continuous':
+                    freq_coll.update_one(
+                        {'tool_name': tool_name, 'trust_evaluation_category': cat},
+                        {'$push': {'values': value}},
+                        upsert=True
+                    )
                 # Calculate trust score and behaviour
-                res = calculate_trust_score_and_behaviour(m, data.payload)
-                # Save tool behaviour result
-                db['tool_behaviour_results'].update_one(
-                    {'tool_name': res['tool_name'], 'trust_evaluation_category': res['trust_evaluation_category']},
-                    {'$set': {'behaviour': res['behaviour'], 'unique_id_value': res['unique_id_value'], 'value': res['value'], 'count': res['count']}},
-                    upsert=True
+                results = []
+                weights = TRUST_SCORE_WEIGHTS_COLLECTION.find_one({}) or {
+                    'category_weights': {
+                    'Security': 20,
+                    'Reliability': 20,
+                    'Resilience': 20,
+                    'Dependability & Uncertainty': 20,
+                    'Goal Analysis': 20
+                    },
+                    'behaviour_weights': {
+                    'normal': 100,
+                    'unpredictable': 50,
+                    'malicious': 0
+                    }
+                 }
+                behaviour_weights = weights.get('behaviour_weights', {'normal': 100, 'unpredictable': 50, 'malicious': 0})
+                category_weights = weights.get('category_weights', {})
+                # Group mapped tools by category
+                from collections import defaultdict
+                cat_tools = defaultdict(list)
+                for m in mapped:
+                    cat = (m.get('trust_evaluation_category') or 'Uncategorized').strip()
+                    cat_tools[cat].append(m)
+                system_max_score = 0
+                system_real_score = 0
+                # For each category, calculate trust score using most recent values
+                for cat, tools in cat_tools.items():
+                    cat_key = cat
+                    cat_weight = category_weights.get(cat, 20)
+                    max_beh_weight = max(behaviour_weights.values())
+                    num_tools = len(tools)
+                    cat_max_score = num_tools * max_beh_weight * cat_weight
+                    system_max_score += cat_max_score
+                    cat_real_score = 0
+                    for tool in tools:
+                        # Get most recent value for this tool
+                        most_recent = db['tool_most_recent_values'].find_one({'tool_name': tool['tool_name'], 'trust_evaluation_category': cat})
+                        payload = most_recent['payload'] if most_recent else None
+                        if payload:
+                            res = calculate_trust_score_and_behaviour(tool, payload)
+                            beh_weight = behaviour_weights.get(res['behaviour'], 0)
+                            cat_real_score += beh_weight * cat_weight
+                            # Save tool behaviour result
+                            db['tool_behaviour_results'].update_one(
+                                {'tool_name': res['tool_name'], 'trust_evaluation_category': res['trust_evaluation_category']},
+                                {'$set': {'behaviour': res['behaviour'], 'unique_id_value': res['unique_id_value'], 'value': res['value'], 'count': res['count']}},
+                                upsert=True
+                            )
+                            # Save trust score result
+                            db['trust_score_results'].update_one(
+                                {'tool_name': res['tool_name'], 'trust_evaluation_category': res['trust_evaluation_category']},
+                                {'$set': {'trust_score': beh_weight * cat_weight, 'max_score': cat_max_score, 'percent': (beh_weight * cat_weight / cat_max_score * 100) if cat_max_score > 0 else 0}},
+                                upsert=True
+                            )
+                            # Store trust score history for tool
+                            db['tool_trust_score_history'].update_one(
+                                {'tool_name': res['tool_name'], 'trust_evaluation_category': res['trust_evaluation_category']},
+                                {'$push': {'scores': beh_weight * cat_weight}},
+                                upsert=True
+                            )
+                            results.append(res)
+                    # Save category behaviour result (from last tool)
+                    if results:
+                        db['category_behaviour_results'].update_one(
+                            {'trust_evaluation_category': cat},
+                            {'$set': {'behaviour': results[-1]['category_behaviour']}},
+                            upsert=True
+                        )
+                    system_real_score += cat_real_score
+                # Calculate system trust score percent
+                system_percent = (system_real_score / system_max_score * 100) if system_max_score > 0 else 0
+                # Save system behaviour result (from last tool)
+                if results:
+                    db['system_behaviour_result'].update_one(
+                        {}, {'$set': {'system_behaviour': results[-1]['system_behaviour']}}, upsert=True)
+                    # Store system behaviour history for pie chart
+                    db['system_behaviour_history'].update_one(
+                        {}, {'$push': {'history': results[-1]['system_behaviour']}}, upsert=True)
+                # Store system trust score history as percentage
+                db['system_trust_score_history'].update_one(
+                    {}, {'$push': {'scores': system_percent}}, upsert=True
                 )
-                # Save category behaviour result
-                db['category_behaviour_results'].update_one(
-                    {'trust_evaluation_category': res['trust_evaluation_category']},
-                    {'$set': {'behaviour': res['category_behaviour']}},
-                    upsert=True
-                )
-                # Save trust score result
-                db['trust_score_results'].update_one(
-                    {'tool_name': res['tool_name'], 'trust_evaluation_category': res['trust_evaluation_category']},
-                    {'$set': {'trust_score': res['trust_score'], 'max_score': res['max_score'], 'percent': res['percent']}},
-                    upsert=True
-                )
-                # Save system behaviour result
-                db['system_behaviour_result'].update_one(
-                    {}, {'$set': {'system_behaviour': res['system_behaviour']}}, upsert=True)
-                results.append(res)
+                return {"status": "ok", "results": {"system_percent": system_percent}}
+            # else:
+            #     print("Unique ID value mismatch:", new_unique_id_value, mapped_unique_id_value)
+    result = collection.insert_one(doc)
+    doc_copy = dict(doc)
+    doc_copy["_id"] = str(result.inserted_id)
+    return {"status": "ok", "results": "Saved without trust analysis (unique_id_value mismatch)", "submitted_payload": doc_copy}
+    #     else:
+    #         print("no map:", new_unique_id_value, mapped_unique_id_value)
+    #         result = collection.insert_one(doc)
+    #         doc_copy = dict(doc)
+    #         doc_copy["_id"] = str(result.inserted_id)
+    #         return {"status": "ok", "results": "Saved without trust analysis (unique_id_value mismatch)", "submitted_payload": doc_copy}
+    # # Now, for each category, get most recent values for all tools
+    
+
+# Endpoint to get system behaviour history frequencies for pie chart
+@app.get("/system-behaviour-history-frequencies")
+async def get_system_behaviour_history_frequencies():
+    hist_coll = db['system_behaviour_history']
+    doc = hist_coll.find_one({})
+    freq = {'normal': 0, 'unpredictable': 0, 'malicious': 0}
+    if doc and 'history' in doc:
+        for beh in doc['history']:
+            if beh in freq:
+                freq[beh] += 1
+    return freq
     collection.insert_one(doc)
-    return {"status": "ok", "results": results}
+    # Return all relevant info for frontend
+    return {
+        "status": "ok",
+        "results": results,
+        "system_trust_score": system_real_score,
+        "system_max_score": system_max_score,
+        "system_percent": system_percent,
+        "system_behaviour": results[-1]["system_behaviour"] if results else None,
+        "category_behaviours": [r["category_behaviour"] for r in results],
+        "tool_behaviours": [r["behaviour"] for r in results],
+        "submitted_payload": doc
+    }
+# Endpoint to get value frequencies for a tool
+@app.get("/tool-value-frequency/{tool_name}/{category}")
+async def get_tool_value_frequency(tool_name: str, category: str):
+    freq_coll = db['tool_value_frequencies']
+    docs = list(freq_coll.find({'tool_name': tool_name, 'trust_evaluation_category': category}))
+    # For binary/categorical, return value counts
+    result = {}
+    for doc in docs:
+        if 'value' in doc and 'count' in doc:
+            result[doc['value']] = doc['count']
+    return result
+
+# Endpoint to get trust score history for a tool
+@app.get("/tool-trust-score-history/{tool_name}/{category}")
+async def get_tool_trust_score_history(tool_name: str, category: str):
+    hist_coll = db['tool_trust_score_history']
+    doc = hist_coll.find_one({'tool_name': tool_name, 'trust_evaluation_category': category})
+    if doc and 'scores' in doc:
+        return doc['scores']
+    return []
+
+# Endpoint to get system trust score history
+@app.get("/system-trust-score-history")
+async def get_system_trust_score_history():
+    hist_coll = db['system_trust_score_history']
+    doc = hist_coll.find_one({})
+    if doc and 'scores' in doc:
+        return doc['scores']
+    return []
+
+# Endpoint to get value history for continuous tool
+@app.get("/tool-value-history/{tool_name}/{category}")
+async def get_tool_value_history(tool_name: str, category: str):
+    freq_coll = db['tool_value_frequencies']
+    doc = freq_coll.find_one({'tool_name': tool_name, 'trust_evaluation_category': category})
+    if doc and 'values' in doc:
+        return doc['values']
+    return []
 
 # Endpoint to get all trust scores and behaviour categorisations
 @app.get("/dashboard/trust-scores")

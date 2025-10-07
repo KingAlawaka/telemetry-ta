@@ -1,5 +1,7 @@
 --clear mongodb
-python3 -c "from pymongo import MongoClient; c=MongoClient('mongodb://localhost:27017/'); db=c['telemetry']; db['tool_data'].delete_many({}); db['mapped_requests'].delete_many({}); print('Cleared tool_data and mapped_requests collections.')"
+python3 -c "from pymongo import MongoClient; c=MongoClient('mongodb://localhost:27017/'); db=c['telemetry']; [db[col].delete_many({}) for col in db.list_collection_names()]; print('Cleared all telemetry collections.')"
+
+python3 -c "from pymongo import MongoClient; c=MongoClient('mongodb://172.21.0.2:27017/'); db=c['telemetry']; [db[col].delete_many({}) for col in db.list_collection_names()]; print('Cleared all telemetry collections.')"
 
 --run server
 uvicorn api.main:app --reload --host 0.0.0.0 --port 8001
@@ -7,3 +9,12 @@ uvicorn fastapi_sender:app --reload
 
 ssh pass
 zrx57u6h3
+
+run mongodb container
+docker run -d \
+  --name telemetry-mongo \
+  -p 27017:27017 \
+  -e MONGO_INITDB_DATABASE=telemetry \
+  -v mongo-data:/data/db \
+  mongo:6.0
+
