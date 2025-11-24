@@ -7,8 +7,10 @@ python3 -c "from pymongo import MongoClient; c=MongoClient('mongodb://172.21.0.2
 uvicorn api.main:app --reload --host 0.0.0.0 --port 8001
 uvicorn fastapi_sender:app --reload
 
-ssh pass
-zrx57u6h3
+UC2 VM
+IP: 192.168.1.238
+u: pasindu
+p: zrx57u6h3
 
 run mongodb container
 docker run -d \
