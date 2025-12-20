@@ -154,13 +154,13 @@ def calculate_trust_score_and_behaviour(tool, payload):
             'Security': 20,
             'Reliability': 20,
             'Resilience': 20,
-            'Dependability & Uncertainty': 20,
-            'Goal Analysis': 20
+            'Threat Exposure': 20,
+            'Intentions': 20
         },
         'behaviour_weights': {
             'normal': 100,
-            'unpredictable': 50,
-            'malicious': 0
+            'suspicious': 50,
+            'compromised': 0
         }
     }
     cat = (tool.get('trust_evaluation_category') or 'Uncategorized').strip()
@@ -205,9 +205,9 @@ def calculate_trust_score_and_behaviour(tool, payload):
         if impact == 'Low':
             behaviour = 'normal'
         elif impact == 'Mid':
-            behaviour = 'unpredictable'
+            behaviour = 'suspicious'
         else:
-            behaviour = 'malicious'
+            behaviour = 'compromised'
     # 3. Category Behaviour
     step3_cfg = step3_map.get(cat_key, {})
     mapped_tools = list(mapped_collection.find({'trust_evaluation_category': cat}))
@@ -230,21 +230,21 @@ def calculate_trust_score_and_behaviour(tool, payload):
         if num >= count_override:
             final_cat_behaviour = target
         else:
-            counts = {b: tool_behaviours.count(b) for b in ['normal', 'unpredictable', 'malicious']}
+            counts = {b: tool_behaviours.count(b) for b in ['normal', 'suspicious', 'compromised']}
             max_count = max(counts.values())
             max_behaviours = [k for k, v in counts.items() if v == max_count]
             if len(max_behaviours) == 1:
                 final_cat_behaviour = max_behaviours[0]
             else:
-                final_cat_behaviour = 'unpredictable'
+                final_cat_behaviour = 'suspicious'
     else:
-        counts = {b: tool_behaviours.count(b) for b in ['normal', 'unpredictable', 'malicious']}
+        counts = {b: tool_behaviours.count(b) for b in ['normal', 'suspicious', 'compromised']}
         max_count = max(counts.values())
         max_behaviours = [k for k, v in counts.items() if v == max_count]
         if len(max_behaviours) == 1:
             final_cat_behaviour = max_behaviours[0]
         else:
-            final_cat_behaviour = 'unpredictable'
+            final_cat_behaviour = 'suspicious'
     # 4. System Behaviour
     step4_cfg = step4 or {}
     all_cat_behaviours = []
@@ -271,23 +271,23 @@ def calculate_trust_score_and_behaviour(tool, payload):
         if num >= count_override:
             system_behaviour = target
         else:
-            counts = {b: all_cat_behaviours.count(b) for b in ['normal', 'unpredictable', 'malicious']}
+            counts = {b: all_cat_behaviours.count(b) for b in ['normal', 'suspicious', 'compromised']}
             max_count = max(counts.values())
             max_behaviours = [k for k, v in counts.items() if v == max_count]
             if len(max_behaviours) == 1:
                 system_behaviour = max_behaviours[0]
             else:
-                system_behaviour = 'unpredictable'
+                system_behaviour = 'suspicious'
     else:
-        counts = {b: all_cat_behaviours.count(b) for b in ['normal', 'unpredictable', 'malicious']}
+        counts = {b: all_cat_behaviours.count(b) for b in ['normal', 'suspicious', 'compromised']}
         max_count = max(counts.values())
         max_behaviours = [k for k, v in counts.items() if v == max_count]
         if len(max_behaviours) == 1:
             system_behaviour = max_behaviours[0]
         else:
-            system_behaviour = 'unpredictable'
+            system_behaviour = 'suspicious'
     # 5. Trust Score Calculation
-    behaviour_weights = weights.get('behaviour_weights', {'normal': 100, 'unpredictable': 50, 'malicious': 0})
+    behaviour_weights = weights.get('behaviour_weights', {'normal': 100, 'suspicious': 50, 'compromised': 0})
     cat_weights = weights.get('category_weights', {})
     cat_weight = cat_weights.get(cat, 20)
     beh_weight = behaviour_weights.get(behaviour, 100)
@@ -360,16 +360,16 @@ async def submit_data(data: ToolData):
                     'Security': 20,
                     'Reliability': 20,
                     'Resilience': 20,
-                    'Dependability & Uncertainty': 20,
-                    'Goal Analysis': 20
+                    'Threat Exposure': 20,
+                    'Intentions': 20
                     },
                     'behaviour_weights': {
                     'normal': 100,
-                    'unpredictable': 50,
-                    'malicious': 0
+                    'suspicious': 50,
+                    'compromised': 0
                     }
                  }
-                behaviour_weights = weights.get('behaviour_weights', {'normal': 100, 'unpredictable': 50, 'malicious': 0})
+                behaviour_weights = weights.get('behaviour_weights', {'normal': 100, 'suspicious': 50, 'compromised': 0})
                 category_weights = weights.get('category_weights', {})
                 # Group mapped tools by category
                 from collections import defaultdict
@@ -422,6 +422,11 @@ async def submit_data(data: ToolData):
                             {'$set': {'behaviour': results[-1]['category_behaviour']}},
                             upsert=True
                         )
+                        db['category_behaviour_history'].update_one(
+                            {'trust_evaluation_category': cat},
+                            {'$push': {'history': results[-1]['category_behaviour']}},
+                            upsert=True
+                        )
                     system_real_score += cat_real_score
                 # Calculate system trust score percent
                 system_percent = (system_real_score / system_max_score * 100) if system_max_score > 0 else 0
@@ -457,7 +462,7 @@ async def submit_data(data: ToolData):
 async def get_system_behaviour_history_frequencies():
     hist_coll = db['system_behaviour_history']
     doc = hist_coll.find_one({})
-    freq = {'normal': 0, 'unpredictable': 0, 'malicious': 0}
+    freq = {'normal': 0, 'suspicious': 0, 'compromised': 0}
     if doc and 'history' in doc:
         for beh in doc['history']:
             if beh in freq:
@@ -777,3 +782,18 @@ async def get_tool_config_step5_all():
         doc["_id"] = str(doc["_id"])
         docs.append(doc)
     return docs
+
+@app.get("/category-behaviour-history-frequencies")
+async def get_category_behaviour_history_frequencies():
+    hist_coll = db['category_behaviour_history']
+    docs = list(hist_coll.find({}))
+    result = {}
+    for doc in docs:
+        cat = doc.get('trust_evaluation_category', 'Uncategorized')
+        freq = {'normal': 0, 'suspicious': 0, 'compromised': 0}
+        history = doc.get('history', [])
+        for beh in history:
+            if beh in freq:
+                freq[beh] += 1
+        result[cat] = freq
+    return result

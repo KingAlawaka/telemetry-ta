@@ -19,4 +19,3 @@ docker run -d \
   -e MONGO_INITDB_DATABASE=telemetry \
   -v mongo-data:/data/db \
   mongo:6.0
-

@@ -15,7 +15,7 @@
         .json-leaf { color: #333; cursor: pointer; }
         .json-branch { margin-left: 1em; }
         /* Make dial canvases and containers smaller */
-    .dial-canvas { width: 100px !important; height: 100px !important; display: block; margin: 0 auto; }
+    .dial-canvas { width: 200px !important; height: 200px !important; display: block; margin: 0 auto; }
         .card.p-3 { padding: 0.5rem !important; }
         .card h5 { font-size: 1rem; margin-bottom: 0.5rem; }
         .list-group { font-size: 0.85em; }
@@ -179,6 +179,7 @@
             let catBehMap = {};
             categoryBehaviours.forEach(cb => {
                 catBehMap[cb.trust_evaluation_category] = cb.behaviour;
+                console.log('Category Behaviour:', cb.trust_evaluation_category, cb.behaviour); // Debug log
             });
             // UI
             let html = '<div class="row">';
@@ -199,12 +200,12 @@
             // Right: Categories (col-md-8)
             html += '<div class="col-md-8"><div class="row">';
             Object.entries(catScores).forEach(([cat, scores], idx) => {
-                html += `<div class="col-md-6 mb-4"><div class="card p-3"><h5>${cat}</h5><canvas id="catDial${idx}" width="100" height="100" class="dial-canvas"></canvas>`;
-                html += `<div>Behaviour: <span class="badge bg-${catBehMap[cat]==='normal'?'success':catBehMap[cat]==='unpredictable'?'warning':'danger'}">${(catBehMap[cat]||'normal').toUpperCase()}</span></div>`;
+                html += `<div class="col-md-6 mb-4"><div class="card p-3"><h5>${cat}</h5><canvas id="catPie${idx}" width="120" height="120" class="dial-canvas"></canvas>`;
+                html += `<div>Current Behaviour: <span class="badge bg-${catBehMap[cat]==='normal'?'success':catBehMap[cat]==='suspicious'?'warning':'danger'}">${(catBehMap[cat]||'normal').toUpperCase()}</span></div>`;
                 html += '<ul class="list-group mt-2">';
                 scores.forEach(ts => {
                     const beh = toolBehMap[`${ts.tool_name}|||${cat}`] || 'normal';
-                    html += `<li class="list-group-item d-flex justify-content-between align-items-center pointer" onclick="showToolInfoModal('${ts.tool_name}','${cat}')">${ts.tool_name}<span class="badge bg-${beh==='normal'?'success':beh==='unpredictable'?'warning':'danger'}">${beh}</span></li>`;
+                    html += `<li class="list-group-item d-flex justify-content-between align-items-center pointer" onclick="showToolInfoModal('${ts.tool_name}','${cat}')">${ts.tool_name}<span class="badge bg-${beh==='normal'?'success':beh==='suspicious'?'warning':'danger'}">${beh}</span></li>`;
                 });
                 html += '</ul></div></div>';
             });
@@ -213,17 +214,40 @@
             document.getElementById('trust-score-dashboard').innerHTML = html;
             // (Removed duplicate rendering block)
             // Render dials
-            Object.entries(catScores).forEach(([cat, scores], idx) => {
-                let percent = scores.length ? scores[0].percent : 0;
-                let ctx = document.getElementById(`catDial${idx}`).getContext('2d');
-                renderDial(ctx, percent, cat);
+            // Object.entries(catScores).forEach(([cat, scores], idx) => {
+            //     let percent = scores.length ? scores[0].percent : 0;
+            //     let ctx = document.getElementById(`catDial${idx}`).getContext('2d');
+            //     renderDial(ctx, percent, cat);
+            // });
+            fetch('/category-behaviour-history-frequencies').then(resp => resp.json()).then(catHist => {
+                console.log('Category Behaviour History:', catHist); // Debug log
+                Object.entries(catScores).forEach(([cat, scores], idx) => {
+                    let freq = catHist[cat] || {normal:0, suspicious:0, compromised:0};
+                    let pieCtx = document.getElementById(`catPie${idx}`).getContext('2d');
+                    let labels = ['Normal', 'Suspicious', 'Compromised'];
+                    let data = [freq.normal||0, freq.suspicious||0, freq.compromised||0];
+                    let colors = ['#198754', '#ffc107', '#dc3545'];
+                    new Chart(pieCtx, {
+                        type: 'pie',
+                        data: {
+                            labels: labels,
+                            datasets: [{
+                                data: data,
+                                backgroundColor: colors
+                            }]
+                        },
+                        options: {
+                            plugins: { title: { display: true, text: 'Overall Behaviour Distribution' }, legend: { position: 'bottom' } }
+                        }
+                    });
+                });
             });
             // Removed system ring/dial indicator
             // Render system behaviour pie chart and labels
             fetch('/system-behaviour-history-frequencies').then(resp => resp.json()).then(freqs => {
                 let pieCtx = document.getElementById('systemBehaviourPieChart').getContext('2d');
-                let labels = ['Normal', 'Unpredictable', 'Malicious'];
-                let data = [freqs.normal, freqs.unpredictable, freqs.malicious];
+                let labels = ['Normal', 'Suspicious', 'Compromised'];
+                let data = [freqs.normal, freqs.suspicious, freqs.compromised];
                 let colors = ['#198754', '#ffc107', '#dc3545'];
                 new Chart(pieCtx, {
                     type: 'pie',
@@ -243,14 +267,14 @@
                 let overallIdx = data.findIndex(v => v === maxCount);
                 let overall = labels[overallIdx] || 'Normal';
                 let overallColor = colors[overallIdx] || '#198754';
-                let overallClass = overall.toLowerCase() === 'normal' ? 'bg-success' : overall.toLowerCase() === 'unpredictable' ? 'bg-warning' : 'bg-danger';
+                let overallClass = overall.toLowerCase() === 'normal' ? 'bg-success' : overall.toLowerCase() === 'suspicious' ? 'bg-warning' : 'bg-danger';
                 let overallLabel = document.getElementById('systemOverallBehaviourLabel');
                 overallLabel.textContent = `Overall: ${overall}`;
                 overallLabel.className = `badge ${overallClass}`;
                 // Set most recent behaviour
                 fetch('/dashboard/system-behaviour').then(r => r.json()).then(sysData => {
                     let recent = sysData.system_behaviour || 'Normal';
-                    let recentClass = recent.toLowerCase() === 'normal' ? 'bg-success' : recent.toLowerCase() === 'unpredictable' ? 'bg-warning' : 'bg-danger';
+                    let recentClass = recent.toLowerCase() === 'normal' ? 'bg-success' : recent.toLowerCase() === 'suspicious' ? 'bg-warning' : 'bg-danger';
                     let recentLabel = document.getElementById('systemRecentBehaviourLabel');
                     recentLabel.textContent = `Most Recent: ${recent.charAt(0).toUpperCase() + recent.slice(1)}`;
                     recentLabel.className = `badge ${recentClass}`;
@@ -357,8 +381,8 @@
                         </select></td>
                         <td><select class="form-select w-auto d-inline" name="${toolName}_${cat}_override_behaviour">
                             <option value="normal" ${behaviourVal === 'normal' ? 'selected' : ''}>Normal</option>
-                            <option value="unpredictable" ${behaviourVal === 'unpredictable' ? 'selected' : ''}>Unpredictable</option>
-                            <option value="malicious" ${behaviourVal === 'malicious' ? 'selected' : ''}>Malicious</option>
+                            <option value="suspicious" ${behaviourVal === 'suspicious' ? 'selected' : ''}>Suspicious</option>
+                            <option value="compromised" ${behaviourVal === 'compromised' ? 'selected' : ''}>Compromised</option>
                         </select></td></tr>`;
                 });
                 html += '</tbody></table></div>';
@@ -637,7 +661,7 @@
             win.document.write('<form id="mapForm">');
             win.document.write(`<div class="mb-2"><label>Tool Name</label><input class="form-control" name="tool_name" value="${item.tool_name}" required></div>`);
             win.document.write('<div class="mb-2"><label>Description</label><input class="form-control" name="description"></div>');
-            win.document.write('<div class="mb-2"><label>Trust Evaluation Category</label><select class="form-control" name="trust_evaluation_category" required><option value="">Select...</option><option value="Security">Security</option><option value="Reliability">Reliability</option><option value="Resilience">Resilience</option><option value="Dependability & Uncertainty">Dependability & Uncertainty</option><option value="Goal Analysis">Goal Analysis</option></select></div>');
+            win.document.write('<div class="mb-2"><label>Trust Evaluation Category</label><select class="form-control" name="trust_evaluation_category" required><option value="">Select...</option><option value="Security">Security</option><option value="Reliability">Reliability</option><option value="Resilience">Resilience</option><option value="Threat Exposure">Threat Exposure</option><option value="Intentions">Intentions</option></select></div>');
             win.document.write('<div class="mb-2"><label>Data Type</label><select class="form-control" name="data_type" id="dataTypeSelect"><option value="binary">Binary</option><option value="categorical">Categorical</option><option value="continuous">Continuous</option></select></div>');
             win.document.write('<div class="mb-2" id="categoriesDiv" style="display:none;"><label>Categories (comma separated)</label><input class="form-control" name="categories"></div>');
             win.document.write('<div class="mb-2" id="continuousDiv" style="display:none;">' +
@@ -771,7 +795,7 @@
                     <h5>Category: <b>${capitalizeWords(cat)}</b></h5>
                     <div>Number of tools registered: <b>${tools.length}</b></div>
                     <div>Default: Majority behaviour for this category will be selected.<br>
-                        <span class="text-secondary">Majority Low = Normal, Majority Mid = Unpredictable, Majority High = Malicious</span>
+                        <span class="text-secondary">Majority Low = Normal, Majority Mid = Suspicious, Majority High = Compromised</span>
                     </div>
                     <div class="mt-2">Override rule:
                         <label class="form-check-label ms-2">
@@ -780,16 +804,16 @@
                         <input type="number" min="1" class="form-control d-inline w-auto" style="width:80px;" name="${cat}_override_count" placeholder="Number of tools" value="${overrideCount}">
                         <select class="form-select w-auto d-inline" name="${cat}_tool_behaviour">
                             <option value="normal" ${toolBehaviour === 'normal' ? 'selected' : ''}>Normal</option>
-                            <option value="unpredictable" ${toolBehaviour === 'unpredictable' ? 'selected' : ''}>Unpredictable</option>
-                            <option value="malicious" ${toolBehaviour === 'malicious' ? 'selected' : ''}>Malicious</option>
+                            <option value="suspicious" ${toolBehaviour === 'suspicious' ? 'selected' : ''}>Suspicious</option>
+                            <option value="compromised" ${toolBehaviour === 'compromised' ? 'selected' : ''}>Compromised</option>
                         </select>
                         <span class="text-secondary ms-2">(If at least <b>number of tools</b> then <b>behaviour</b>)</span>
                     </div>
                     <div class="mt-2">If at least one tool with this behaviour:
                         <select class="form-select w-auto d-inline" name="${cat}_override_behaviour">
                             <option value="normal" ${overrideBehaviour === 'normal' ? 'selected' : ''}>Normal</option>
-                            <option value="unpredictable" ${overrideBehaviour === 'unpredictable' ? 'selected' : ''}>Unpredictable</option>
-                            <option value="malicious" ${overrideBehaviour === 'malicious' ? 'selected' : ''}>Malicious</option>
+                            <option value="suspicious" ${overrideBehaviour === 'suspicious' ? 'selected' : ''}>Suspicious</option>
+                            <option value="compromised" ${overrideBehaviour === 'compromised' ? 'selected' : ''}>Compromised</option>
                         </select>
                         <span class="text-secondary ms-2">(Result in this behaviour)</span>
                     </div>
@@ -863,15 +887,15 @@
             <input type="number" min="1" class="form-control d-inline w-auto" style="width:80px;" name="system_override_count" placeholder="Number of categories" value="${overrideCount}">
             <select class="form-select w-auto d-inline" name="system_override_behaviour">
                 <option value="normal" ${overrideBehaviour === 'normal' ? 'selected' : ''}>Normal</option>
-                <option value="unpredictable" ${overrideBehaviour === 'unpredictable' ? 'selected' : ''}>Unpredictable</option>
-                <option value="malicious" ${overrideBehaviour === 'malicious' ? 'selected' : ''}>Malicious</option>
+                <option value="suspicious" ${overrideBehaviour === 'suspicious' ? 'selected' : ''}>Suspicious</option>
+                <option value="compromised" ${overrideBehaviour === 'compromised' ? 'selected' : ''}>Compromised</option>
             </select>
             <span class="text-secondary ms-2">(If at least <b>number of categories</b> then <b>behaviour</b>)</span>
         </div>
         <div class="mt-2">Final System Behaviour: <select class="form-select w-auto d-inline" name="system_final_behaviour">
             <option value="normal" ${finalBehaviour === 'normal' ? 'selected' : ''}>Normal</option>
-            <option value="unpredictable" ${finalBehaviour === 'unpredictable' ? 'selected' : ''}>Unpredictable</option>
-            <option value="malicious" ${finalBehaviour === 'malicious' ? 'selected' : ''}>Malicious</option>
+            <option value="suspicious" ${finalBehaviour === 'suspicious' ? 'selected' : ''}>Suspicious</option>
+            <option value="compromised" ${finalBehaviour === 'compromised' ? 'selected' : ''}>Compromised</option>
         </select></div>
     </div>`;
             document.getElementById('trust-config-step4').innerHTML = html;
@@ -1017,8 +1041,8 @@
                     'Security',
                     'Reliability',
                     'Resilience',
-                    'Dependability & Uncertainty',
-                    'Goal Analysis'
+                    'Threat Exposure',
+                    'Intentions'
                 ];
                 let catWeights = {};
                 let total = 0;
@@ -1034,8 +1058,8 @@
                 // Get and normalise behaviour weights
                 let behaviourWeights = {
                     normal: parseInt(document.getElementById('behaviour_weight_normal').value) || 0,
-                    unpredictable: parseInt(document.getElementById('behaviour_weight_unpredictable').value) || 0,
-                    malicious: parseInt(document.getElementById('behaviour_weight_malicious').value) || 0
+                    suspicious: parseInt(document.getElementById('behaviour_weight_suspicious').value) || 0,
+                    compromised: parseInt(document.getElementById('behaviour_weight_compromised').value) || 0
                 };
                 // Do NOT normalise behaviour weights, save as entered
                 // Save to DB
@@ -1137,8 +1161,8 @@
                 } else {
                     const impact = toolImpacts[key];
                     if (impact === 'Low') behaviour = 'normal';
-                    else if (impact === 'Mid') behaviour = 'unpredictable';
-                    else behaviour = 'malicious';
+                    else if (impact === 'Mid') behaviour = 'suspicious';
+                    else behaviour = 'compromised';
                 }
                 toolBehaviours[key] = behaviour;
             });
@@ -1172,13 +1196,13 @@
                         finalCatBehaviour = target;
                     } else {
                         // If not enough for override, use majority rule
-                        const counts = { normal: 0, unpredictable: 0, malicious: 0 };
+                        const counts = { normal: 0, suspicious: 0, compromised: 0 };
                         behaviours.forEach(b => { counts[b] = (counts[b] || 0) + 1; });
                         let max = 'normal';
-                        if (counts.malicious > counts.normal && counts.malicious > counts.unpredictable) max = 'malicious';
-                        else if (counts.unpredictable > counts.normal && counts.unpredictable > counts.malicious) max = 'unpredictable';
-                        else if (counts.normal > counts.unpredictable && counts.normal > counts.malicious) max = 'normal';
-                        else if (counts.normal === counts.unpredictable || counts.normal === counts.malicious || counts.unpredictable === counts.malicious) max = 'unpredictable';
+                        if (counts.compromised > counts.normal && counts.compromised > counts.suspicious) max = 'compromised';
+                        else if (counts.suspicious > counts.normal && counts.suspicious > counts.compromised) max = 'suspicious';
+                        else if (counts.normal > counts.suspicious && counts.normal > counts.compromised) max = 'normal';
+                        else if (counts.normal === counts.suspicious || counts.normal === counts.compromised || counts.suspicious === counts.compromised) max = 'suspicious';
                         finalCatBehaviour = max;
                     }
                     // if (cat === "security"){
@@ -1186,13 +1210,13 @@
                     // }
                 } else {
                     // Default: majority rule
-                    const counts = { normal: 0, unpredictable: 0, malicious: 0 };
+                    const counts = { normal: 0, suspicious: 0, compromised: 0 };
                     behaviours.forEach(b => { counts[b] = (counts[b] || 0) + 1; });
                     let max = 'normal';
-                    if (counts.malicious > counts.normal && counts.malicious > counts.unpredictable) max = 'malicious';
-                    else if (counts.unpredictable > counts.normal && counts.unpredictable > counts.malicious) max = 'unpredictable';
-                    else if (counts.normal > counts.unpredictable && counts.normal > counts.malicious) max = 'normal';
-                    else if (counts.normal === counts.unpredictable || counts.normal === counts.malicious || counts.unpredictable === counts.malicious) max = 'unpredictable';
+                    if (counts.compromised > counts.normal && counts.compromised > counts.suspicious) max = 'compromised';
+                    else if (counts.suspicious > counts.normal && counts.suspicious > counts.compromised) max = 'suspicious';
+                    else if (counts.normal > counts.suspicious && counts.normal > counts.compromised) max = 'normal';
+                    else if (counts.normal === counts.suspicious || counts.normal === counts.compromised || counts.suspicious === counts.compromised) max = 'suspicious';
                     finalCatBehaviour = max;
                 }
                 // If at least one tool with one_tool_behaviour, set to that behaviour
@@ -1214,24 +1238,24 @@
                     systemBehaviour = target;
                 } else {
                     // If override not applicable, use majority behaviour
-                    const counts = { normal: 0, unpredictable: 0, malicious: 0 };
+                    const counts = { normal: 0, suspicious: 0, compromised: 0 };
                     catBehaviours.forEach(b => { counts[b] = (counts[b] || 0) + 1; });
                     let max = 'normal';
-                    if (counts.malicious > counts.normal && counts.malicious > counts.unpredictable) max = 'malicious';
-                    else if (counts.unpredictable > counts.normal && counts.unpredictable > counts.malicious) max = 'unpredictable';
-                    else if (counts.normal > counts.unpredictable && counts.normal > counts.malicious) max = 'normal';
-                    else if (counts.normal === counts.unpredictable || counts.normal === counts.malicious || counts.unpredictable === counts.malicious) max = 'unpredictable';
+                    if (counts.compromised > counts.normal && counts.compromised > counts.suspicious) max = 'compromised';
+                    else if (counts.suspicious > counts.normal && counts.suspicious > counts.compromised) max = 'suspicious';
+                    else if (counts.normal > counts.suspicious && counts.normal > counts.compromised) max = 'normal';
+                    else if (counts.normal === counts.suspicious || counts.normal === counts.compromised || counts.suspicious === counts.compromised) max = 'suspicious';
                     systemBehaviour = max;
                 }
             } else {
                 // No override, use majority behaviour
-                const counts = { normal: 0, unpredictable: 0, malicious: 0 };
+                const counts = { normal: 0, suspicious: 0, compromised: 0 };
                 catBehaviours.forEach(b => { counts[b] = (counts[b] || 0) + 1; });
                 let max = 'normal';
-                if (counts.malicious > counts.normal && counts.malicious > counts.unpredictable) max = 'malicious';
-                else if (counts.unpredictable > counts.normal && counts.unpredictable > counts.malicious) max = 'unpredictable';
-                else if (counts.normal > counts.unpredictable && counts.normal > counts.malicious) max = 'normal';
-                else if (counts.normal === counts.unpredictable || counts.normal === counts.malicious || counts.unpredictable === counts.malicious) max = 'unpredictable';
+                if (counts.compromised > counts.normal && counts.compromised > counts.suspicious) max = 'compromised';
+                else if (counts.suspicious > counts.normal && counts.suspicious > counts.compromised) max = 'suspicious';
+                else if (counts.normal > counts.suspicious && counts.normal > counts.compromised) max = 'normal';
+                else if (counts.normal === counts.suspicious || counts.normal === counts.compromised || counts.suspicious === counts.compromised) max = 'suspicious';
                 systemBehaviour = max;
             }
             // Show results
@@ -1250,7 +1274,7 @@
             });
             window.simulatedCategoryBehaviours = categoryBehaviours;
             window.simulatedToolBehaviours = toolBehaviours;
-            html += `</ul><b>System Behaviour (Step 4):</b> <span class="badge bg-${systemBehaviour === 'normal' ? 'success' : systemBehaviour === 'unpredictable' ? 'warning' : 'danger'}">${systemBehaviour.toUpperCase()}</span>`;
+            html += `</ul><b>System Behaviour (Step 4):</b> <span class="badge bg-${systemBehaviour === 'normal' ? 'success' : systemBehaviour === 'suspicious' ? 'warning' : 'danger'}">${systemBehaviour.toUpperCase()}</span>`;
             document.getElementById('trust-simulation-result').innerHTML = html;
         }
         document.getElementById('trust-score-config').addEventListener('click', function (e) {
@@ -1265,8 +1289,8 @@
                 'Security',
                 'Reliability',
                 'Resilience',
-                'Dependability & Uncertainty',
-                'Goal Analysis'
+                'Threat Exposure',
+                'Intentions'
             ];
             let html = '<b>Assign weights to each category (total = 100):</b><br>';
             categories.forEach(cat => {
@@ -1286,8 +1310,8 @@
                     'Security',
                     'Reliability',
                     'Resilience',
-                    'Dependability & Uncertainty',
-                    'Goal Analysis'
+                    'Threat Exposure',
+                    'Intentions'
                 ];
                 let total = 0;
                 let weights = {};
@@ -1305,8 +1329,8 @@
             }
             html += '<b>Assign weights for behaviour types:</b><br>';
             html += `<div class="mb-2">Normal: <input type="number" min="0" max="100" value="100" name="behaviour_weight_normal" id="behaviour_weight_normal" class="form-control d-inline w-auto" oninput="window.behaviourWeightNormal=this.value"></div>`;
-            html += `<div class="mb-2">Unpredictable: <input type="number" min="0" max="100" value="50" name="behaviour_weight_unpredictable" id="behaviour_weight_unpredictable" class="form-control d-inline w-auto" oninput="window.behaviourWeightUnpredictable=this.value"></div>`;
-            html += `<div class="mb-2">Malicious: <input type="number" min="0" max="100" value="0" name="behaviour_weight_malicious" id="behaviour_weight_malicious" class="form-control d-inline w-auto" oninput="window.behaviourWeightMalicious=this.value"></div>`;
+            html += `<div class="mb-2">Suspicious: <input type="number" min="0" max="100" value="50" name="behaviour_weight_suspicious" id="behaviour_weight_suspicious" class="form-control d-inline w-auto" oninput="window.behaviourWeightSuspiciousdictable=this.value"></div>`;
+            html += `<div class="mb-2">Compromised: <input type="number" min="0" max="100" value="0" name="behaviour_weight_compromised" id="behaviour_weight_compromised" class="form-control d-inline w-auto" oninput="window.behaviourWeightCompromised=this.value"></div>`;
             document.getElementById('trust-score-config-weights').innerHTML = html;
         }
         document.getElementById('tool-config-tab').addEventListener('shown.bs.tab', function () {
@@ -1343,8 +1367,8 @@
                 'Security',
                 'Reliability',
                 'Resilience',
-                'Dependability & Uncertainty',
-                'Goal Analysis'
+                'Threat Exposure',
+                'Intentions'
             ];
             let catWeights = {};
             let total = 0;
@@ -1361,14 +1385,14 @@
             // Get behaviour weights
             let behaviourWeights = {
                 normal: parseInt(document.querySelector('[name="behaviour_weight_normal"]').value) || 0,
-                unpredictable: parseInt(document.querySelector('[name="behaviour_weight_unpredictable"]').value) || 0,
-                malicious: parseInt(document.querySelector('[name="behaviour_weight_malicious"]').value) || 0
+                suspicious: parseInt(document.querySelector('[name="behaviour_weight_suspicious"]').value) || 0,
+                compromised: parseInt(document.querySelector('[name="behaviour_weight_compromised"]').value) || 0
             };
             // Use previously simulated categoryBehaviours if available
             let categoryBehaviours = window.simulatedCategoryBehaviours || {};
             // 4. Trust Score Calculation
             // TODO: Normalize behaviour weights if sum > 100
-            // let behTotal = behaviourWeights.normal + behaviourWeights.unpredictable + behaviourWeights.malicious;
+            // let behTotal = behaviourWeights.normal + behaviourWeights.suspicious + behaviourWeights.compromised;
             // if (behTotal > 100) {
             //     Object.keys(behaviourWeights).forEach(b => {
             //         behaviourWeights[b] = Math.round((behaviourWeights[b] / behTotal) * 100);
