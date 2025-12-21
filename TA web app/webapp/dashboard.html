@@ -652,11 +652,29 @@
                         <button class="btn btn-sm btn-secondary" onclick="toggleJson('${payloadId}')">Toggle</button>
                         <pre id="${payloadId}" class="json-collapsed">${JSON.stringify(item.payload, null, 2)}</pre>
                     </td>
-                    <td><button class="btn btn-primary btn-sm" onclick='openMapWindow(${JSON.stringify(item)})'>Map</button></td>
+                    <td>
+                        <button class="btn btn-primary btn-sm" onclick='openMapWindow(${JSON.stringify(item)})'>Map</button>
+                        <button class="btn btn-danger btn-sm ms-1" onclick="removeRequest('${item._id}')">Remove</button>
+                    </td>
                 </tr>`;
                 table.innerHTML += row;
             });
         }
+
+        async function removeRequest(requestId) {
+            if (!confirm('Are you sure you want to delete this request?')) {
+                return;
+            }
+            const response = await fetch(`/data/${requestId}`, {
+                method: 'DELETE'
+            });
+            if (response.ok) {
+                manualRefresh();
+            } else {
+                alert('Failed to delete request.');
+            }
+        }
+
         function manualRefresh() {
             fetchMapped().then(fetchData);
         }

@@ -14,6 +14,7 @@ from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 import json
 from fastapi import Body
+from bson import ObjectId
 
 class ToolData(BaseModel):
     tool_name: str
@@ -57,6 +58,21 @@ TRUST_CONFIG_STEP3_COLLECTION = db.get_collection('trust_analyser_step3_config')
 TRUST_CONFIG_STEP4_COLLECTION = db.get_collection('trust_analyser_step4_config')
 TOOL_CONFIG_STEP5_COLLECTION = db.get_collection('tool_config_step5')
 TRUST_SCORE_WEIGHTS_COLLECTION = db.get_collection('trust_score_weights')
+
+
+@app.delete("/data/{request_id}")
+async def delete_data(request_id: str):
+    try:
+        # Convert string ID to ObjectId
+        obj_id = ObjectId(request_id)
+        result = collection.delete_one({"_id": obj_id})
+        if result.deleted_count == 1:
+            return {"status": "success", "message": "Request deleted"}
+        else:
+            raise HTTPException(status_code=404, detail="Request not found")
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"status": "fail", "error": str(e)})
+
 
 # Endpoint to save trust score weights
 @app.post("/trust-score-weights")
