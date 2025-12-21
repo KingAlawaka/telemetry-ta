@@ -62,6 +62,21 @@
                         </div>
                     </div>
                 </div>
+
+                <!-- Trust History Modal -->
+                <div class="modal fade" id="trustHistoryModal" tabindex="-1" aria-labelledby="trustHistoryModalLabel" aria-hidden="true">
+                    <div class="modal-dialog modal-lg">
+                        <div class="modal-content">
+                            <div class="modal-header">
+                                <h5 class="modal-title" id="trustHistoryModalLabel">Full Trust Score History</h5>
+                                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                            </div>
+                            <div class="modal-body">
+                                <canvas id="fullTrustScoreGraph" width="400" height="200"></canvas>
+                            </div>
+                        </div>
+                    </div>
+                </div>
         <div class="tab-content" id="dashboardTabsContent">
             <div class="tab-pane fade show active" id="main-dashboard" role="tabpanel">
                 <div class="container mt-4">
@@ -197,7 +212,10 @@
                 </div>
                 <div class="mt-4"><b>Trust Score</b></div>
                 <canvas id="systemScoreChart" width="400" height="200" style="margin-top:1em;"></canvas>
+                <a href="#" id="show-full-history-link" class="text-center mt-2">Detailed View</a>
             </div></div>`;
+
+
             // Right: Categories (col-md-8)
             html += '<div class="col-md-8"><div class="row">';
             Object.entries(catScores).forEach(([cat, scores], idx) => {
@@ -292,6 +310,10 @@
             });
             // Render system trust score history graph
             fetch('/system-trust-score-history').then(resp => resp.json()).then(scores => {
+                if (scores.length > 10) {
+                    scores = scores.slice(-10); // Keep only the 10 most recent scores
+                }
+                
                 let labels = scores.map((_,i) => i+1);
                 let ctx = document.getElementById('systemScoreChart').getContext('2d');
                 new Chart(ctx, {
@@ -299,7 +321,7 @@
                     data: {
                         labels: labels,
                         datasets: [{
-                            label: 'System Trust Score History',
+                            label: 'Trust Score (%)',
                             data: scores,
                             borderColor: '#fd7e14',
                             backgroundColor: 'rgba(253,126,20,0.2)',
@@ -307,10 +329,56 @@
                         }]
                     },
                     options: {
-                        plugins: { title: { display: true, text: 'System Trust Score History' } },
+                        plugins: { title: { display: true, text: 'Recent Trust Score History' } },
                         scales: { y: { beginAtZero: true } }
                     }
                 });
+            });
+
+            document.getElementById('show-full-history-link').addEventListener('click', function(e) {
+                e.preventDefault();
+                const modal = new bootstrap.Modal(document.getElementById('trustHistoryModal'));
+                const fullHistoryCtx = document.getElementById('fullTrustScoreGraph').getContext('2d');
+
+                // Destroy existing chart instance if it exists
+                if (window.fullHistoryChart) {
+                    window.fullHistoryChart.destroy();
+                }
+                var trustScores = [];
+                fetch('/system-trust-score-history').then(resp => resp.json()).then(scores => {
+                    let labels = scores.map((_,i) => i+1);
+                    window.fullHistoryChart = new Chart(fullHistoryCtx, {
+                    type: 'line',
+                    data: {
+                        labels: labels,
+                        datasets: [{
+                            label: 'Trust Score (%)',
+                            data: scores,
+                            borderColor: '#007bff',
+                            backgroundColor: 'rgba(0, 123, 255, 0.2)',
+                            fill: true,
+                            tension: 0.4,
+                        }]
+                    },
+                    options: {
+                        plugins: {
+                            title: {
+                                display: true,
+                                text: 'Complete Trust Score History'
+                            }
+                        },
+                        scales: {
+                            y: {
+                                beginAtZero: true,
+                                max: 100
+                            }
+                        }
+                    }
+                });
+                modal.show();
+                });
+
+                
             });
 
             // Initialize Bootstrap tooltips
