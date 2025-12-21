@@ -1,6 +1,19 @@
-# Restore ToolData and MapRequest class definitions
 from pydantic import BaseModel
 from typing import Optional
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
+from pymongo import MongoClient
+from pydantic import BaseModel
+import os
+from dotenv import load_dotenv
+from typing import Optional
+import traceback
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
+import json
+from fastapi import Body
 
 class ToolData(BaseModel):
     tool_name: str
@@ -20,16 +33,6 @@ class MapRequest(BaseModel):
     value_path: str
     supplement: Optional[str] = None
 
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse, FileResponse
-from fastapi.staticfiles import StaticFiles
-from pymongo import MongoClient
-from pydantic import BaseModel
-import os
-from dotenv import load_dotenv
-from typing import Optional
-import json
-import traceback
 
 load_dotenv()
 
@@ -54,9 +57,8 @@ TRUST_CONFIG_STEP3_COLLECTION = db.get_collection('trust_analyser_step3_config')
 TRUST_CONFIG_STEP4_COLLECTION = db.get_collection('trust_analyser_step4_config')
 TOOL_CONFIG_STEP5_COLLECTION = db.get_collection('tool_config_step5')
 TRUST_SCORE_WEIGHTS_COLLECTION = db.get_collection('trust_score_weights')
-# Endpoint to save trust score weights
-from fastapi import Body
 
+# Endpoint to save trust score weights
 @app.post("/trust-score-weights")
 async def save_trust_score_weights(payload: dict = Body(...)):
     try:
@@ -65,44 +67,8 @@ async def save_trust_score_weights(payload: dict = Body(...)):
         return {"status": "success"}
     except Exception as e:
         return JSONResponse(status_code=500, content={"status": "fail", "error": str(e)})
-    
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse, FileResponse
-from fastapi.staticfiles import StaticFiles
-from pymongo import MongoClient
-from pydantic import BaseModel
-import os
-from dotenv import load_dotenv
-from typing import Optional
-import json
-import traceback
 
-load_dotenv()
-
-app = FastAPI()
-
-# MongoDB connection details
-MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017/")
-DB_NAME = os.getenv("DB_NAME", "telemetry")
-COLLECTION_NAME = os.getenv("COLLECTION_NAME", "tool_data")
-MAPPED_COLLECTION = os.getenv("MAPPED_COLLECTION", "mapped_requests")
-
-client = MongoClient(MONGO_URI)
-db = client[DB_NAME]
-collection = db[COLLECTION_NAME]
-mapped_collection = db[MAPPED_COLLECTION]
-
-
-# Trust analyser configuration collections
-TRUST_CONFIG_COLLECTION = db.get_collection('trust_analyser_config')
-TRUST_CONFIG_STEP1_COLLECTION = db.get_collection('trust_analyser_step1_config')
-TRUST_CONFIG_STEP2_COLLECTION = db.get_collection('trust_analyser_step2_config')
-TRUST_CONFIG_STEP3_COLLECTION = db.get_collection('trust_analyser_step3_config')
-TRUST_CONFIG_STEP4_COLLECTION = db.get_collection('trust_analyser_step4_config')
-TOOL_CONFIG_STEP5_COLLECTION = db.get_collection('tool_config_step5')
-TRUST_SCORE_WEIGHTS_COLLECTION = db.get_collection('trust_score_weights')
 # Endpoint to save trust score weights
-from fastapi import Body
 @app.post("/trust-score-weights")
 async def save_trust_score_weights(payload: dict = Body(...)):
     try:
@@ -448,14 +414,6 @@ async def submit_data(data: ToolData):
     doc_copy = dict(doc)
     doc_copy["_id"] = str(result.inserted_id)
     return {"status": "ok", "results": "Saved without trust analysis (unique_id_value mismatch)", "submitted_payload": doc_copy}
-    #     else:
-    #         print("no map:", new_unique_id_value, mapped_unique_id_value)
-    #         result = collection.insert_one(doc)
-    #         doc_copy = dict(doc)
-    #         doc_copy["_id"] = str(result.inserted_id)
-    #         return {"status": "ok", "results": "Saved without trust analysis (unique_id_value mismatch)", "submitted_payload": doc_copy}
-    # # Now, for each category, get most recent values for all tools
-    
 
 # Endpoint to get system behaviour history frequencies for pie chart
 @app.get("/system-behaviour-history-frequencies")
@@ -627,8 +585,6 @@ async def save_trust_config_step2(request: Request):
         return JSONResponse(status_code=500, content={"status": "fail", "error": str(e)})
 
 # Trust analyser step 1 config collection and endpoint (one doc per tool)
-
-
 # Step 1 config: link to mapped request by storing mapped_request_id
 @app.post("/trust-config-step1")
 async def save_trust_config_step1(request: Request):

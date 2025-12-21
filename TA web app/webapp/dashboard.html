@@ -6,6 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Trust Analyser Dashboard</title>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
     <style>
         .json-collapsed { display: none; }
         .json-expanded { display: block; }
@@ -200,7 +201,16 @@
             // Right: Categories (col-md-8)
             html += '<div class="col-md-8"><div class="row">';
             Object.entries(catScores).forEach(([cat, scores], idx) => {
-                html += `<div class="col-md-6 mb-4"><div class="card p-3"><h5>${cat}</h5><canvas id="catPie${idx}" width="120" height="120" class="dial-canvas"></canvas>`;
+
+                const tooltips = {
+                    "Security": "Assesses how well an IoT entity protects data, communications, and operations against unauthorized access and attacks.",
+                    "Reliability": "Measures the consistency and correctness of an IoT entity’s behavior in delivering expected services over time.",
+                    "Resilience": "Evaluates the ability of an IoT entity to withstand, recover from, and adapt to faults or adverse conditions.",
+                    "Threat Exposure": "Indicates the level of risk an IoT entity faces based on its vulnerabilities, attack surface, and environmental context.",
+                    "Intentions": "Estimates the likelihood that an IoT entity will act in a trustworthy, compliant, or malicious manner based on observed behavior."
+                };
+
+                html += `<div class="col-md-6 mb-4"><div class="card p-3"><h5>${cat}<i class="bi bi-info-circle" data-bs-toggle="tooltip" data-bs-placement="top" title="${tooltips[cat] || ''}"></i></h5><canvas id="catPie${idx}" width="120" height="120" class="dial-canvas"></canvas>`;
                 html += `<div>Current Behaviour: <span class="badge bg-${catBehMap[cat]==='normal'?'success':catBehMap[cat]==='suspicious'?'warning':'danger'}">${(catBehMap[cat]||'normal').toUpperCase()}</span></div>`;
                 html += '<ul class="list-group mt-2">';
                 scores.forEach(ts => {
@@ -301,6 +311,12 @@
                         scales: { y: { beginAtZero: true } }
                     }
                 });
+            });
+
+            // Initialize Bootstrap tooltips
+            const tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
+            tooltipTriggerList.map(function (tooltipTriggerEl) {
+                return new bootstrap.Tooltip(tooltipTriggerEl)
             });
         }
 
