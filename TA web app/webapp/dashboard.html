@@ -265,6 +265,7 @@
 
                 html += `<div class="col-md-6 mb-4"><div class="card p-3"><h5>${cat}<i class="bi bi-info-circle" data-bs-toggle="tooltip" data-bs-placement="top" title="${tooltips[cat] || ''}"></i></h5><canvas id="catPie${idx}" width="120" height="120" class="dial-canvas"></canvas>`;
                 html += `<div>Current Behaviour: <span class="badge bg-${catBehMap[cat]==='normal'?'success':catBehMap[cat]==='suspicious'?'warning':'danger'}">${(catBehMap[cat]||'normal').toUpperCase()}</span></div>`;
+                html += `<div class="mt-2 mb-2"><small><b>Recent 10 Evaluations:</b></small><div id="catRecent${idx}" class="mt-1"></div></div>`;
                 html += '<ul class="list-group mt-2">';
                 scores.forEach(ts => {
                     const beh = toolBehMap[`${ts.tool_name}|||${cat}`] || 'normal';
@@ -315,6 +316,26 @@
                     });
                 });
             });
+            
+            // Fetch and render recent 10 behavior dots for each category
+            fetch('/category-behaviour-recent').then(resp => resp.json()).then(recentData => {
+                console.log('Recent Category Behaviours:', recentData);
+                Object.entries(catScores).forEach(([cat, scores], idx) => {
+                    let recentBehaviors = recentData[cat] || [];
+                    let dotsHtml = '<div style="display: flex; gap: 4px; flex-wrap: wrap;">';
+                    recentBehaviors.forEach(beh => {
+                        let color = beh === 'normal' ? '#198754' : beh === 'suspicious' ? '#ffc107' : '#dc3545';
+                        let title = beh.charAt(0).toUpperCase() + beh.slice(1);
+                        dotsHtml += `<span style="width: 16px; height: 16px; border-radius: 50%; background-color: ${color}; display: inline-block;" title="${title}" data-bs-toggle="tooltip" data-bs-placement="top"></span>`;
+                    });
+                    dotsHtml += '</div>';
+                    let container = document.getElementById(`catRecent${idx}`);
+                    if (container) {
+                        container.innerHTML = dotsHtml;
+                    }
+                });
+            });
+            
             // Removed system ring/dial indicator
             // Render system behaviour pie chart and labels
             fetch('/system-behaviour-history-frequencies').then(resp => resp.json()).then(freqs => {

@@ -2,7 +2,7 @@ from annotated_types import doc
 from pydantic import BaseModel
 from typing import Optional
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse, FileResponse, StreamingResponse
+from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from pymongo import MongoClient
 from pydantic import BaseModel
@@ -44,21 +44,15 @@ trust_cycle_state = {
     "is_running": False,
     "start_time": None,
     "end_time": None,
-    "submissions": [],
-    "user_stopped": False  # Track if user manually stopped the cycle
+    "submissions": []
 }
 
 trust_cycle_config = {
     "enabled": False,
-    "duration": 5,  # numeric value
-    "time_unit": "minutes"  # "seconds", "minutes", or "hours"
+    "duration": 300  # hours
 }
 
 cycle_task = None
-
-# SSE event queue for real-time cycle updates
-cycle_status_queue = asyncio.Queue()
-
 load_dotenv()
 
 app = FastAPI()
@@ -89,55 +83,8 @@ async def lifespan(app: FastAPI):
     config = TRUST_CYCLE_CONFIG_COLLECTION.find_one({"config_name": "main_cycle"})
     if config:
         trust_cycle_config['enabled'] = config.get('enabled', False)
-        trust_cycle_config['duration'] = config.get('duration', 5)
-        trust_cycle_config['time_unit'] = config.get('time_unit', 'minutes')
+        trust_cycle_config['duration'] = config.get('duration', 300)
     print("Trust cycle config loaded:", trust_cycle_config)
-
-async def broadcast_cycle_status(status: str, data: dict = None):
-    """
-    Broadcasts cycle status updates to all connected SSE clients.
-    
-    Args:
-        status: Status type (e.g., 'started', 'stopped', 'restarted', 'analysis_complete')
-        data: Additional data to send with the update
-    """
-    message = {
-        'status': status,
-        'timestamp': datetime.utcnow().isoformat(),
-        'cycle_state': {
-            'is_running': trust_cycle_state['is_running'],
-            'start_time': trust_cycle_state['start_time'].isoformat() if trust_cycle_state['start_time'] else None,
-            'end_time': trust_cycle_state['end_time'].isoformat() if trust_cycle_state['end_time'] else None,
-            'submissions_count': len(trust_cycle_state['submissions'])
-        }
-    }
-    if data:
-        message.update(data)
-    
-    try:
-        cycle_status_queue.put_nowait(message)
-    except asyncio.QueueFull:
-        pass
-
-def convert_duration_to_seconds(duration: int, time_unit: str) -> int:
-    """
-    Converts duration with time unit to seconds.
-    
-    Args:
-        duration: numeric duration value
-        time_unit: "seconds", "minutes", or "hours"
-    
-    Returns:
-        Duration in seconds
-    """
-    if time_unit == "seconds":
-        return duration
-    elif time_unit == "minutes":
-        return duration * 60
-    elif time_unit == "hours":
-        return duration * 3600
-    else:
-        return duration * 60  # default to minutes
 
 # Endpoint to save trust score weights
 @app.post("/trust-score-weights")
@@ -884,27 +831,6 @@ async def get_category_behaviour_history_frequencies():
         result[cat] = freq
     return result
 
-@app.get("/category-behaviour-recent")
-async def get_category_behaviour_recent():
-    """
-    Get the 10 most recent behavior evaluations for each category.
-    
-    Returns:
-        {
-            "category_name": [list of 10 most recent behaviors (normal, suspicious, compromised)]
-        }
-    """
-    hist_coll = db['category_behaviour_history']
-    docs = list(hist_coll.find({}))
-    result = {}
-    for doc in docs:
-        cat = doc.get('trust_evaluation_category', 'Uncategorized')
-        history = doc.get('history', [])
-        # Get the 10 most recent (last 10 items from the history list)
-        recent_10 = history[-10:] if len(history) >= 10 else history
-        result[cat] = recent_10
-    return result
-
 # --- Trust Analysis Cycle Endpoints ---
 @app.post("/trust-cycle/config")
 async def set_cycle_config(request: Request):
@@ -912,8 +838,7 @@ async def set_cycle_config(request: Request):
     data = await request.json()
     config_to_save = {
         'enabled': data.get('enabled', False),
-        'duration': int(data.get('duration', 5)),
-        'time_unit': data.get('time_unit', 'minutes')  # "seconds", "minutes", or "hours"
+        'duration': int(data.get('duration', 300))
     }
     # Update the global config in memory
     trust_cycle_config.update(config_to_save)
@@ -931,14 +856,12 @@ async def get_cycle_config():
     if config:
         return {
             "enabled": config.get("enabled", False),
-            "duration": config.get("duration", 5),
-            "time_unit": config.get("time_unit", "minutes")
+            "duration": config.get("duration", 300)
         }
     # Return default if not found in DB
     return {
         "enabled": False,
-        "duration": 5,
-        "time_unit": "minutes"
+        "duration": 300
     }
 
 @app.post("/trust-cycle/start")
@@ -947,20 +870,9 @@ async def start_cycle():
     if not trust_cycle_state["is_running"]:
         trust_cycle_state["is_running"] = True
         trust_cycle_state["start_time"] = datetime.utcnow()
-        trust_cycle_state["user_stopped"] = False  # Reset flag when starting new cycle
-        # Convert duration to seconds based on time_unit
-        duration_seconds = convert_duration_to_seconds(
-            trust_cycle_config["duration"],
-            trust_cycle_config.get("time_unit", "minutes")
-        )
-        trust_cycle_state["end_time"] = trust_cycle_state["start_time"] + timedelta(seconds=duration_seconds)
+        trust_cycle_state["end_time"] = trust_cycle_state["start_time"] + timedelta(seconds=trust_cycle_config["duration"])
         trust_cycle_state["submissions"] = []
         cycle_task = asyncio.create_task(run_analysis_cycle())
-        # Broadcast cycle started event
-        await broadcast_cycle_status('started', {
-            'message': 'Cycle started',
-            'duration_seconds': duration_seconds
-        })
         return {"status": "cycle started", "end_time": trust_cycle_state["end_time"].isoformat()}
     return {"status": "cycle already running"}
 
@@ -972,13 +884,6 @@ async def stop_cycle():
             cycle_task.cancel()
         await perform_batch_analysis()
         trust_cycle_state["is_running"] = False
-        # Mark that cycle was stopped by user (don't auto-restart)
-        trust_cycle_state["user_stopped"] = True
-        # Broadcast cycle stopped event
-        await broadcast_cycle_status('stopped', {
-            'message': 'Cycle stopped by user',
-            'submissions_analyzed': len(trust_cycle_state["submissions"])
-        })
         return {"status": "cycle stopped and analysis performed"}
     return {"status": "cycle not running"}
 
@@ -991,67 +896,11 @@ async def get_cycle_status():
         "submissions_count": len(trust_cycle_state["submissions"])
     }
 
-@app.get("/trust-cycle/stream")
-async def stream_cycle_status():
-    """
-    Server-Sent Events (SSE) endpoint for real-time cycle status updates.
-    Clients connect here to receive immediate updates when cycle starts, stops, or restarts.
-    """
-    async def event_generator():
-        while True:
-            try:
-                # Wait for next message with 5 second timeout
-                message = await asyncio.wait_for(cycle_status_queue.get(), timeout=5.0)
-                yield f"data: {json.dumps(message)}\n\n"
-            except asyncio.TimeoutError:
-                # Send heartbeat every 5 seconds
-                yield f": heartbeat\n\n"
-            except Exception as e:
-                print(f"SSE Error: {e}")
-                break
-    
-    return StreamingResponse(event_generator(), media_type="text/event-stream")
-
 async def run_analysis_cycle():
-    # Convert duration to seconds based on time_unit
-    duration_seconds = convert_duration_to_seconds(
-        trust_cycle_config["duration"],
-        trust_cycle_config.get("time_unit", "minutes")
-    )
-    await asyncio.sleep(duration_seconds)
-    # Cycle completed naturally (time exceeded)
+    await asyncio.sleep(trust_cycle_config["duration"])
     if trust_cycle_state["is_running"]:
         await perform_batch_analysis()
         trust_cycle_state["is_running"] = False
-        # Broadcast analysis complete event
-        await broadcast_cycle_status('analysis_complete', {
-            'message': 'Analysis completed',
-            'submissions_analyzed': len(trust_cycle_state["submissions"])
-        })
-        # Wait 5 seconds before restarting cycle
-        print("Cycle completed. Waiting 5 seconds before next cycle...")
-        await asyncio.sleep(5)
-        print("5 seconds wait complete. Restarting cycle.")
-        # Check if cycle is still enabled before restarting
-        if trust_cycle_config["enabled"] and not trust_cycle_state.get("user_stopped", False):
-            # Automatically restart the cycle
-            global cycle_task
-            trust_cycle_state["is_running"] = True
-            trust_cycle_state["start_time"] = datetime.utcnow()
-            duration_seconds = convert_duration_to_seconds(
-                trust_cycle_config["duration"],
-                trust_cycle_config.get("time_unit", "minutes")
-            )
-            trust_cycle_state["end_time"] = trust_cycle_state["start_time"] + timedelta(seconds=duration_seconds)
-            trust_cycle_state["submissions"] = []
-            cycle_task = asyncio.create_task(run_analysis_cycle())
-            # Broadcast restart event
-            await broadcast_cycle_status('restarted', {
-                'message': 'Cycle restarted automatically',
-                'new_end_time': trust_cycle_state["end_time"].isoformat()
-            })
-            print(f"Cycle restarted. Will complete at {trust_cycle_state['end_time'].isoformat()}")
-
 
 async def perform_batch_analysis():
     """
