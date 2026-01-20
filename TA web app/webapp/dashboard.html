@@ -48,6 +48,13 @@
                     type="button" role="tab">Trust Score Configuration</button>
             </li>
         </ul>
+        <!-- <ul class="list-group mt-3">
+            <li class="list-group-item">
+                <b>Note:</b> This dashboard provides insights into the trust scores and configurations. Use the tabs to navigate
+                through the different sections. For detailed information on each tool's trust score history, click on the
+                "Detailed View" link in the Requests tab.
+            </li>
+        </ul> -->
                 <!-- Tool Info Modal -->
                 <div class="modal fade" id="toolInfoModal" tabindex="-1" aria-labelledby="toolInfoModalLabel" aria-hidden="true">
                     <div class="modal-dialog modal-lg">
@@ -62,13 +69,12 @@
                         </div>
                     </div>
                 </div>
-
                 <!-- Trust History Modal -->
                 <div class="modal fade" id="trustHistoryModal" tabindex="-1" aria-labelledby="trustHistoryModalLabel" aria-hidden="true">
                     <div class="modal-dialog modal-lg">
                         <div class="modal-content">
                             <div class="modal-header">
-                                <h5 class="modal-title" id="trustHistoryModalLabel">Full Trust Score History</h5>
+                                <h5 class="modal-title" id="trustHistoryModalLabel">Complete Trust Score History</h5>
                                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                             </div>
                             <div class="modal-body">
@@ -84,7 +90,7 @@
                     <div id="trust-score-dashboard"></div>
                 </div>
             </div>
-            <div class="tab-pane fade show active" id="requests" role="tabpanel">
+            <div class="tab-pane fade show" id="requests" role="tabpanel">
                 <div class="d-flex justify-content-end mt-3 mb-2">
                     <button class="btn btn-outline-primary btn-sm" onclick="manualRefresh()">Refresh</button>
                 </div>
@@ -114,15 +120,47 @@
                     <button class="btn btn-primary mt-3" id="saveTrustConfigStep2Btn">Save Step 2 Configuration</button>
                     <div id="trust-config-step2-msg" class="mt-2"></div>
                     <hr>
-                    <h4 class="mt-5"> </h4>
+                    <h4 class="mt-5">Configuration 3: Category Behaviour Configuration</h4>
                     <div id="trust-config-step3"></div>
                     <button class="btn btn-warning mt-3" id="saveTrustConfigStep3Btn">Save Step 3 Configuration</button>
                     <div id="trust-config-step3-msg" class="mt-2"></div>
                     <hr>
-                    <h4 class="mt-5"> </h4>
+                    <h4 class="mt-5">Configuration 4: System Behaviour Configuration</h4>
                     <div id="trust-config-step4"></div>
                     <button class="btn btn-danger mt-3" id="saveTrustConfigStep4Btn">Save Step 4 Configuration</button>
                     <div id="trust-config-step4-msg" class="mt-2"></div>
+                    <hr>
+                    <h4 class="mt-5">Configuration 5: Trust Analysis Cycle</h4>
+                    <div id="trust-cycle-config">
+                        <div class="card p-3">
+                            <div class="form-check form-switch mb-3">
+                                <input class="form-check-input" type="checkbox" id="cycle-enabled-switch">
+                                <label class="form-check-label" for="cycle-enabled-switch">Enable Trust Analysis Cycle</label>
+                            </div>
+                            <div class="mb-3">
+                                <label for="cycle-duration-input" class="form-label">Cycle Duration</label>
+                                <div class="input-group">
+                                    <input type="number" class="form-control" id="cycle-duration-input" placeholder="e.g., 5" min="1">
+                                    <select class="form-select" id="cycle-time-unit-select" style="max-width: 150px;">
+                                        <option value="seconds">Seconds</option>
+                                        <option value="minutes" selected>Minutes</option>
+                                        <option value="hours">Hours</option>
+                                    </select>
+                                </div>
+                                <small class="form-text text-muted">Effective duration: <span id="effective-duration-display">0 seconds</span></small>
+                            </div>
+                            <button class="btn btn-primary" id="save-cycle-config-btn">Save Cycle Configuration</button>
+                            <div id="cycle-config-save-msg" class="mt-2"></div>
+                        </div>
+                        <div class="card p-3 mt-3">
+                            <h5>Cycle Control</h5>
+                            <div class="d-flex gap-2">
+                                <button class="btn btn-success" id="start-cycle-btn">Start Cycle</button>
+                                <button class="btn btn-danger" id="stop-cycle-btn">Stop Cycle & Analyze</button>
+                            </div>
+                            <div id="cycle-status" class="mt-3">Status: Inactive</div>
+                        </div>
+                    </div>
                 </div>
             </div>
             <div class="tab-pane fade" id="mapped" role="tabpanel">
@@ -167,9 +205,9 @@
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.3.0/dist/chart.umd.min.js"></script>
     <script>
+        let showAllTrustHistory = false;
         // --- Main Dashboard Logic ---
         async function renderTrustScoreDashboard() {
-            // ...existing code for dashboard rendering...
             const resp = await fetch('/dashboard/trust-scores');
             const data = await resp.json();
             const sysResp = await fetch('/dashboard/system-behaviour');
@@ -201,8 +239,7 @@
             let html = '<div class="row">';
             // Left: System (col-md-4)
             html += `<div class="col-md-4 mb-4"><div class="card p-3">
-                <h5>System</h5>
-                <div class="mb-3"><b>Behaviour</b></div>
+                <h5>System Behaviour</h5>
                 <div class="mb-2 d-flex align-items-center gap-2">
                     <span id="systemOverallBehaviourLabel" class="badge" style="font-size:1em;"></span>
                     <span id="systemRecentBehaviourLabel" class="badge" style="font-size:1em;"></span>
@@ -214,8 +251,6 @@
                 <canvas id="systemScoreChart" width="400" height="200" style="margin-top:1em;"></canvas>
                 <a href="#" id="show-full-history-link" class="text-center mt-2">Detailed View</a>
             </div></div>`;
-
-
             // Right: Categories (col-md-8)
             html += '<div class="col-md-8"><div class="row">';
             Object.entries(catScores).forEach(([cat, scores], idx) => {
@@ -237,10 +272,20 @@
                 });
                 html += '</ul></div></div>';
             });
-            html += '</div></div>';
-            html += '</div>';
+            // html += '</div></div>';
+            // html += `<div class="col-md-4">
+            //             <div class="card p-3">
+            //                 <h5>Overall System Behaviour</h5>
+            //                 <canvas id="systemPieChart" width="200" height="200" class="dial-canvas"></canvas>
+            //                 <div>Current Behaviour: <span id="system-behaviour-badge" class="badge"></span></div>
+            //                 <h5 class="mt-4">Total Trust Score</h5>
+            //                  <canvas id="systemScoreChart" width="400" height="200" style="margin-top:1em;"></canvas>
+            //                 <a href="#" id="show-full-history-link" class="text-center mt-2">Detailed View</a>
+            //             </div>
+            //         </div>`;
+            
             document.getElementById('trust-score-dashboard').innerHTML = html;
-            // (Removed duplicate rendering block)
+
             // Render dials
             // Object.entries(catScores).forEach(([cat, scores], idx) => {
             //     let percent = scores.length ? scores[0].percent : 0;
@@ -304,11 +349,67 @@
                     let recent = sysData.system_behaviour || 'Normal';
                     let recentClass = recent.toLowerCase() === 'normal' ? 'bg-success' : recent.toLowerCase() === 'suspicious' ? 'bg-warning' : 'bg-danger';
                     let recentLabel = document.getElementById('systemRecentBehaviourLabel');
-                    recentLabel.textContent = `Most Recent: ${recent.charAt(0).toUpperCase() + recent.slice(1)}`;
+                    recentLabel.textContent = `Current: ${recent.charAt(0).toUpperCase() + recent.slice(1)}`;
                     recentLabel.className = `badge ${recentClass}`;
                 });
             });
             // Render system trust score history graph
+            // fetch('/system-trust-score-history').then(resp => resp.json()).then(scores => {
+            //     let labels = scores.map((_,i) => i+1);
+            //     let ctx = document.getElementById('systemScoreChart').getContext('2d');
+            //     new Chart(ctx, {
+            //         type: 'line',
+            //         data: {
+            //             labels: labels,
+            //             datasets: [{
+            //                 label: 'System Trust Score History',
+            //                 data: scores,
+            //                 borderColor: '#fd7e14',
+            //                 backgroundColor: 'rgba(253,126,20,0.2)',
+            //                 fill: true
+            //             }]
+            //         },
+            //         options: {
+            //             plugins: { title: { display: true, text: 'System Trust Score History' } },
+            //             scales: { y: { beginAtZero: true } }
+            //         }
+            //     });
+            // });
+
+            // Render trust score graph as a line chart (last 10)
+            // const trustScoreCtx = document.getElementById('trustScoreGraph').getContext('2d');
+            // const recentScores = trustScores.slice(-10);
+            // const trustScoreLabels = recentScores.map((_, index) => `Eval ${trustScores.length - recentScores.length + index + 1}`);
+            // const trustScoreData = recentScores.map(ts => ts.percent);
+            // new Chart(trustScoreCtx, {
+            //     type: 'line',
+            //     data: {
+            //         labels: trustScoreLabels,
+            //         datasets: [{
+            //             label: 'Recent Trust Score',
+            //             data: trustScoreData,
+            //             borderColor: '#007bff',
+            //             backgroundColor: 'rgba(0, 123, 255, 0.2)',
+            //             fill: true,
+            //             tension: 0.4,
+            //         }],
+            //     },
+            //     options: {
+            //         plugins: {
+            //             title: {
+            //                 display: true,
+            //                 text: 'Recent Trust Score Trend',
+            //             },
+            //         },
+            //         scales: {
+            //             y: {
+            //                 beginAtZero: true,
+            //                 max: 100,
+            //             },
+            //         },
+            //     },
+            // });
+
             fetch('/system-trust-score-history').then(resp => resp.json()).then(scores => {
                 if (scores.length > 10) {
                     scores = scores.slice(-10); // Keep only the 10 most recent scores
@@ -335,6 +436,7 @@
                 });
             });
 
+            // Handle "Detailed View" link
             document.getElementById('show-full-history-link').addEventListener('click', function(e) {
                 e.preventDefault();
                 const modal = new bootstrap.Modal(document.getElementById('trustHistoryModal'));
@@ -380,6 +482,50 @@
 
                 
             });
+
+            // document.getElementById('show-full-history-link').addEventListener('click', function(e) {
+            //     e.preventDefault();
+            //     const modal = new bootstrap.Modal(document.getElementById('trustHistoryModal'));
+            //     const fullHistoryCtx = document.getElementById('fullTrustScoreGraph').getContext('2d');
+
+            //     // Destroy existing chart instance if it exists
+            //     if (window.fullHistoryChart) {
+            //         window.fullHistoryChart.destroy();
+            //     }
+
+            //     const fullLabels = trustScores.map((_, index) => `Evaluation ${index + 1}`);
+            //     const fullData = trustScores.map(ts => ts.percent);
+
+            //     window.fullHistoryChart = new Chart(fullHistoryCtx, {
+            //         type: 'line',
+            //         data: {
+            //             labels: fullLabels,
+            //             datasets: [{
+            //                 label: 'Full Trust Score History',
+            //                 data: fullData,
+            //                 borderColor: '#007bff',
+            //                 backgroundColor: 'rgba(0, 123, 255, 0.2)',
+            //                 fill: true,
+            //                 tension: 0.4,
+            //             }]
+            //         },
+            //         options: {
+            //             plugins: {
+            //                 title: {
+            //                     display: true,
+            //                     text: 'Complete Trust Score History'
+            //                 }
+            //             },
+            //             scales: {
+            //                 y: {
+            //                     beginAtZero: true,
+            //                     max: 100
+            //                 }
+            //             }
+            //         }
+            //     });
+            //     modal.show();
+            // });
 
             // Initialize Bootstrap tooltips
             const tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
@@ -479,7 +625,146 @@
             renderTrustConfigStep2();
             renderTrustConfigStep3();
             renderTrustConfigStep4();
+            renderTrustCycleConfig();
         });
+
+        // --- Trust Analysis Cycle ---
+        async function renderTrustCycleConfig() {
+            const response = await fetch('/trust-cycle/config');
+            const config = await response.json();
+            document.getElementById('cycle-enabled-switch').checked = config.enabled;
+            document.getElementById('cycle-duration-input').value = config.duration;
+            document.getElementById('cycle-time-unit-select').value = config.time_unit || 'minutes';
+            updateEffectiveDuration();
+            updateCycleStatus();
+        }
+
+        function updateEffectiveDuration() {
+            const duration = parseInt(document.getElementById('cycle-duration-input').value) || 0;
+            const timeUnit = document.getElementById('cycle-time-unit-select').value;
+            let seconds = 0;
+            if (timeUnit === 'seconds') {
+                seconds = duration;
+            } else if (timeUnit === 'minutes') {
+                seconds = duration * 60;
+            } else if (timeUnit === 'hours') {
+                seconds = duration * 3600;
+            }
+            document.getElementById('effective-duration-display').textContent = seconds + ' seconds';
+        }
+
+        async function saveTrustCycleConfig() {
+            const enabled = document.getElementById('cycle-enabled-switch').checked;
+            const duration = document.getElementById('cycle-duration-input').value;
+            const time_unit = document.getElementById('cycle-time-unit-select').value;
+            const response = await fetch('/trust-cycle/config', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ enabled, duration, time_unit })
+            });
+            const msgDiv = document.getElementById('cycle-config-save-msg');
+            if (response.ok) {
+                msgDiv.innerHTML = '<span class="text-success">Cycle configuration saved!</span>';
+            } else {
+                msgDiv.innerHTML = '<span class="text-danger">Failed to save configuration.</span>';
+            }
+        }
+
+        async function startCycle() {
+            const response = await fetch('/trust-cycle/start', { method: 'POST' });
+            if (response.ok) {
+                updateCycleStatus();
+            } else {
+                alert('Failed to start cycle.');
+            }
+        }
+
+        async function stopCycle() {
+            const response = await fetch('/trust-cycle/stop', { method: 'POST' });
+            if (response.ok) {
+                updateCycleStatus();
+            } else {
+                alert('Failed to stop cycle.');
+            }
+        }
+        let eventSource = null;
+
+        async function updateCycleStatus() {
+            const response = await fetch('/trust-cycle/status');
+            const status = await response.json();
+            const statusDiv = document.getElementById('cycle-status');
+            if (status.is_running) {
+                const endTime = new Date(status.end_time + 'Z'); // Append Z for UTC
+                statusDiv.innerHTML = `Status: <span class="text-success">Running</span>. Ends at: ${endTime.toLocaleTimeString()}. Submissions: ${status.submissions_count}`;
+                document.getElementById('start-cycle-btn').disabled = true;
+                document.getElementById('stop-cycle-btn').disabled = false;
+            } else {
+                statusDiv.innerHTML = 'Status: <span class="text-danger">Inactive</span>';
+                document.getElementById('start-cycle-btn').disabled = false;
+                document.getElementById('stop-cycle-btn').disabled = true;
+            }
+        }
+
+        function connectCycleStatusStream() {
+            if (eventSource) {
+                eventSource.close();
+            }
+            eventSource = new EventSource('/trust-cycle/stream');
+            
+            eventSource.onmessage = function(event) {
+                try {
+                    const data = JSON.parse(event.data);
+                    console.log('Cycle update:', data);
+                    
+                    const statusDiv = document.getElementById('cycle-status');
+                    
+                    if (data.status === 'started') {
+                        const endTime = new Date(data.cycle_state.end_time + 'Z');
+                        statusDiv.innerHTML = `Status: <span class="text-success">Running</span>. Ends at: ${endTime.toLocaleTimeString()}. Submissions: ${data.cycle_state.submissions_count}`;
+                        document.getElementById('start-cycle-btn').disabled = true;
+                        document.getElementById('stop-cycle-btn').disabled = false;
+                    } else if (data.status === 'stopped') {
+                        statusDiv.innerHTML = 'Status: <span class="text-danger">Inactive</span> - Stopped by user. Analyzed ' + (data.submissions_analyzed || 0) + ' submissions.';
+                        document.getElementById('start-cycle-btn').disabled = false;
+                        document.getElementById('stop-cycle-btn').disabled = true;
+                    } else if (data.status === 'analysis_complete') {
+                        statusDiv.innerHTML = 'Status: <span class="text-warning">Analyzing</span> - Analysis complete. Waiting to restart...';
+                    } else if (data.status === 'restarted') {
+                        const endTime = new Date(data.new_end_time + 'Z');
+                        statusDiv.innerHTML = `Status: <span class="text-success">Running</span> (Auto-restarted). Ends at: ${endTime.toLocaleTimeString()}. Submissions: ${data.cycle_state.submissions_count}`;
+                        document.getElementById('start-cycle-btn').disabled = true;
+                        document.getElementById('stop-cycle-btn').disabled = false;
+                    }
+                } catch (e) {
+                    console.error('Error parsing SSE data:', e);
+                }
+            };
+            
+            eventSource.onerror = function(error) {
+                console.error('SSE connection error:', error);
+                eventSource.close();
+                // Reconnect after 3 seconds
+                setTimeout(connectCycleStatusStream, 3000);
+            };
+        }
+
+        // Add event listeners for cycle buttons
+        document.getElementById('save-cycle-config-btn').addEventListener('click', saveTrustCycleConfig);
+        document.getElementById('start-cycle-btn').addEventListener('click', startCycle);
+        document.getElementById('stop-cycle-btn').addEventListener('click', stopCycle);
+        
+        // Add event listeners for duration and time unit changes
+        document.getElementById('cycle-duration-input').addEventListener('change', updateEffectiveDuration);
+        document.getElementById('cycle-duration-input').addEventListener('input', updateEffectiveDuration);
+        document.getElementById('cycle-time-unit-select').addEventListener('change', updateEffectiveDuration);
+
+        // Connect to SSE stream for real-time updates
+        connectCycleStatusStream();
+        
+        // Periodically update cycle status as fallback
+        setInterval(updateCycleStatus, 30000); // every 30 seconds
+
+
         async function saveTrustConfigStep2() {
             const container = document.getElementById('trust-config-step2');
             const rows = container.querySelectorAll('tbody tr');
@@ -1107,13 +1392,14 @@
             const container = document.getElementById('trust-score-step5');
             const rows = container.querySelectorAll('tbody tr');
             let configsToSave = [];
-            rows.forEach(row => {
+            rows.forEach (row => {
                 const toolName = row.querySelector('td').textContent;
                 let cat = row.closest('table').parentElement.previousSibling.textContent.replace('Category:', '').trim().toLowerCase();
                 let valueInput = row.querySelector(`[name="${toolName}_${cat}_value"]`);
                 let value = valueInput.value;
                 configsToSave.push({ tool_name: toolName, trust_evaluation_category: cat, value });
             });
+            console.log(configsToSave);
             let completed = 0;
             for (const config of configsToSave) {
                 const resp = await fetch('/tool-config-step5', {
@@ -1197,7 +1483,7 @@
             const rows = document.querySelectorAll('#trust-score-step5 tbody tr');
             rows.forEach(row => {
                 const toolName = row.querySelector('td').textContent;
-                let cat = row.closest('table').parentElement.previousSibling.textContent.replace('Category:', '').trim().toLowerCase();
+                let cat = row.closest('table').parentElement.previousSibling.textContent.replace('Category:', '').trim();
                 let valueInput = row.querySelector(`[name="${toolName}_${cat}_value"]`);
                 let countInput = row.querySelector(`[name="${toolName}_${cat}_count"]`);
                 let value = valueInput.value;
@@ -1225,7 +1511,7 @@
             mapped.forEach(tool => {
                 const toolName = tool.tool_name;
                 const cat = (tool.trust_evaluation_category || 'Uncategorized').trim().toLowerCase();
-                const key = `${toolName}|||${cat}`;
+                               const key = `${toolName}|||${cat}`;
                 const step1Cfg = step1Map[key] || {};
                 const step2Cfg = step2Map[key] || {};
                 const input = toolInputs[key] || { value: '', count: 1 };
@@ -1591,7 +1877,6 @@
                 tableBody.innerHTML += row;
             });
         }
-    </script>
     </script>
     <script>
     // Show tool info modal with value frequency/history graphs
