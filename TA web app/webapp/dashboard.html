@@ -86,7 +86,12 @@
         <div class="tab-content" id="dashboardTabsContent">
             <div class="tab-pane fade show active" id="main-dashboard" role="tabpanel">
                 <div class="container mt-4">
-                    <h3>Trust Score Dashboard</h3>
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <!-- <h3>Trust Analyser</h3> -->
+                        <button class="btn btn-outline-primary btn-sm" onclick="location.reload()">
+                            <i class="bi bi-arrow-clockwise"></i> Refresh Dashboard
+                        </button>
+                    </div>
                     <div id="trust-score-dashboard"></div>
                 </div>
             </div>
@@ -164,7 +169,12 @@
                 </div>
             </div>
             <div class="tab-pane fade" id="mapped" role="tabpanel">
-                <table class="table table-bordered mt-4">
+                <div class="d-flex justify-content-end mt-3 mb-2">
+                    <button class="btn btn-outline-primary btn-sm" onclick="fetchMapped()">
+                        <i class="bi bi-arrow-clockwise"></i> Refresh
+                    </button>
+                </div>
+                <table class="table table-bordered mt-2">
                     <thead>
                         <tr>
                             <th>Tool Name</th>
@@ -177,6 +187,7 @@
                             <th>Categories</th>
                             <th>Supplement Info</th>
                             <th>Count</th>
+                            <th>Actions</th>
                         </tr>
                     </thead>
                     <tbody id="mapped-table">
@@ -246,6 +257,10 @@
                 </div>
                 <div class="mt-2 d-flex justify-content-center">
                     <canvas id="systemBehaviourPieChart" width="100" height="100"></canvas>
+                </div>
+                <div class="mt-3">
+                    <small><b>Recent 10 Evaluations:</b></small>
+                    <div id="systemRecentIndicators" class="mt-2 d-flex gap-2 justify-content-center flex-wrap"></div>
                 </div>
                 <div class="mt-4"><b>Trust Score</b></div>
                 <canvas id="systemScoreChart" width="400" height="200" style="margin-top:1em;"></canvas>
@@ -372,6 +387,23 @@
                     let recentLabel = document.getElementById('systemRecentBehaviourLabel');
                     recentLabel.textContent = `Current: ${recent.charAt(0).toUpperCase() + recent.slice(1)}`;
                     recentLabel.className = `badge ${recentClass}`;
+                    
+                    // Render recent 10 system behaviour indicators
+                    let recentBehaviors = sysData.recent_behaviour || [];
+                    let dotsHtml = '';
+                    recentBehaviors.forEach(beh => {
+                        let color = beh === 'normal' ? '#198754' : beh === 'suspicious' ? '#ffc107' : '#dc3545';
+                        let title = beh.charAt(0).toUpperCase() + beh.slice(1);
+                        dotsHtml += `<span style="width: 18px; height: 18px; border-radius: 50%; background-color: ${color}; display: inline-block; border: 1px solid #ddd;" title="${title}" data-bs-toggle="tooltip" data-bs-placement="top"></span>`;
+                    });
+                    let indicatorContainer = document.getElementById('systemRecentIndicators');
+                    if (indicatorContainer) {
+                        indicatorContainer.innerHTML = dotsHtml;
+                        // Reinitialize tooltips for new elements
+                        document.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(el => {
+                            new bootstrap.Tooltip(el);
+                        });
+                    }
                 });
             });
             // Render system trust score history graph
@@ -967,12 +999,24 @@
         async function fetchMapped() {
             const response = await fetch('/mapped');
             const data = await response.json();
+            
+            // Also fetch removed mappings
+            const removedResp = await fetch('/mapped/removed');
+            const removedData = await removedResp.json();
+            
+            // Combine both active and removed with a marker
+            const allData = [
+                ...data.map(item => ({...item, is_removed: false})),
+                ...removedData.map(item => ({...item, is_removed: true}))
+            ];
+            
             mappedList = data;
             const table = document.getElementById('mapped-table');
             table.innerHTML = '';
-            data.forEach(item => {
+            allData.forEach(item => {
+                const statusBadge = item.is_removed ? '<span class="badge bg-warning ms-2">Previous</span>' : '';
                 const row = `<tr>
-                    <td>${item.tool_name}</td>
+                    <td>${item.tool_name}${statusBadge}</td>
                     <td>${item.description || ''}</td>
                     <td>${item.data_type}</td>
                     <td>${item.trust_evaluation_category || ''}</td>
@@ -982,6 +1026,9 @@
                     <td>${item.categories || ''}</td>
                     <td>${item.supplement || ''}</td>
                     <td>${item.count || 0}</td>
+                    <td>
+                        <button class="btn btn-sm btn-danger" onclick="deleteMappedRequest('${item._id}')">Delete</button>
+                    </td>
                 </tr>`;
                 table.innerHTML += row;
             });
@@ -999,6 +1046,22 @@
                 }
                 return val;
             } catch { return undefined; }
+        }
+        async function deleteMappedRequest(requestId) {
+            if (confirm('Are you sure you want to delete this mapped request? This action cannot be undone.')) {
+                try {
+                    const response = await fetch(`/mapped/${requestId}`, { method: 'DELETE' });
+                    const data = await response.json();
+                    if (data.status === 'success') {
+                        fetchMapped(); // Refresh the table
+                        alert('Mapped request deleted successfully');
+                    } else {
+                        alert('Error: ' + (data.error || 'Failed to delete mapped request'));
+                    }
+                } catch (error) {
+                    alert('Error deleting mapped request: ' + error.message);
+                }
+            }
         }
         async function fetchData() {
             const response = await fetch('/data');
@@ -1905,70 +1968,112 @@
         const modal = new bootstrap.Modal(document.getElementById('toolInfoModal'));
         const contentDiv = document.getElementById('toolInfoModalContent');
         contentDiv.innerHTML = `<div class='text-center'><div class='spinner-border'></div> Loading...</div>`;
-        // Fetch mapped to get data type
+        
+        // Fetch active mapped requests
         let mappedResp = await fetch('/mapped');
         let mapped = await mappedResp.json();
+        
+        // Fetch removed mapped requests
+        let removedResp = await fetch('/mapped/removed');
+        let removedMapped = await removedResp.json();
+        
+        // Look for tool in active mappings
         let tool = mapped.find(t => t.tool_name === toolName && (t.trust_evaluation_category||'').trim().toLowerCase() === category.trim().toLowerCase());
+        
+        // If not found in active, check removed mappings
+        let isRemoved = false;
         if (!tool) {
-            contentDiv.innerHTML = `<div class='text-danger'>Tool not found.</div>`;
-            modal.show();
-            return;
+            tool = removedMapped.find(t => t.tool_name === toolName && (t.trust_evaluation_category||'').trim().toLowerCase() === category.trim().toLowerCase());
+            if (tool) {
+                isRemoved = true;
+            }
         }
-        let html = `<h5>${toolName} (${tool.data_type}) - ${category}</h5>`;
-        if (tool.data_type === 'binary' || tool.data_type === 'categorical') {
+        
+        // Get data type from endpoint (works for both active and removed)
+        let dataTypeResp = await fetch(`/tool-data-type/${encodeURIComponent(toolName)}/${encodeURIComponent(category)}`);
+        let dataTypeData = await dataTypeResp.json();
+        let dataType = dataTypeData.data_type || 'continuous';
+        let dataSource = dataTypeData.source || 'default';
+        console.log(dataTypeData)
+        // Determine alert message
+        let alertHtml = '';
+        if (!tool) {
+            // No mapping found at all - show historical data if available
+            alertHtml = `<div class='alert alert-info'><strong>Historical Data:</strong> This tool was previously evaluated in this category. Showing historical analysis data.</div>`;
+        } else if (isRemoved) {
+            // Mapping was removed/reassigned
+            alertHtml = `<div class='alert alert-warning'><strong>Note:</strong> This tool has been reassigned to another category. Showing historical data for this previous mapping.</div>`;
+        }
+        
+        let html = `<h5>${toolName} (${dataType}) - ${category}</h5>${alertHtml}`;
+        
+        if (dataType === 'binary' || dataType === 'categorical') {
             let freqResp = await fetch(`/tool-value-frequency/${encodeURIComponent(toolName)}/${encodeURIComponent(category)}`);
             let freqData = await freqResp.json();
-            let labels = Object.keys(freqData);
-            let values = Object.values(freqData);
-            html += `<canvas id='toolFreqChart' width='400' height='200'></canvas>`;
-            contentDiv.innerHTML = html;
-            setTimeout(() => {
-                let ctxFreq = document.getElementById('toolFreqChart').getContext('2d');
-                new Chart(ctxFreq, {
-                    type: 'bar',
-                    data: {
-                        labels: labels,
-                        datasets: [{
-                            label: 'Value Frequency',
-                            data: values,
-                            backgroundColor: '#0d6efd'
-                        }]
-                    },
-                    options: {
-                        plugins: { title: { display: true, text: 'Value Frequency' } },
-                        scales: { y: { beginAtZero: true } }
-                    }
-                });
-            }, 100);
-        } else if (tool.data_type === 'continuous') {
+            
+            if (Object.keys(freqData).length > 0) {
+                let labels = Object.keys(freqData);
+                let values = Object.values(freqData);
+                html += `<canvas id='toolFreqChart' width='400' height='200'></canvas>`;
+                contentDiv.innerHTML = html;
+                setTimeout(() => {
+                    let ctxFreq = document.getElementById('toolFreqChart').getContext('2d');
+                    new Chart(ctxFreq, {
+                        type: 'bar',
+                        data: {
+                            labels: labels,
+                            datasets: [{
+                                label: 'Value Frequency',
+                                data: values,
+                                backgroundColor: '#0d6efd'
+                            }]
+                        },
+                        options: {
+                            plugins: { title: { display: true, text: 'Value Frequency' } },
+                            scales: { y: { beginAtZero: true } }
+                        }
+                    });
+                }, 100);
+            } else {
+                html += `<div class='alert alert-secondary mt-3'>No frequency data available.</div>`;
+                contentDiv.innerHTML = html;
+            }
+        } else if (dataType === 'continuous') {
             let histResp = await fetch(`/tool-value-history/${encodeURIComponent(toolName)}/${encodeURIComponent(category)}`);
             let histData = await histResp.json();
-            let labels = histData.map((_,i) => i+1);
-            let values = histData;
-            html += `<canvas id='toolHistChart' width='400' height='200'></canvas>`;
-            contentDiv.innerHTML = html;
-            setTimeout(() => {
-                let ctxHist = document.getElementById('toolHistChart').getContext('2d');
-                new Chart(ctxHist, {
-                    type: 'line',
-                    data: {
-                        labels: labels,
-                        datasets: [{
-                            label: 'Value History',
-                            data: values,
-                            borderColor: '#198754',
-                            backgroundColor: 'rgba(25,135,84,0.2)',
-                            fill: true
-                        }]
-                    },
-                    options: {
-                        plugins: { title: { display: true, text: 'Value History' } },
-                        scales: { y: { beginAtZero: true } }
-                    }
-                });
-            }, 100);
+            
+            if (histData && histData.length > 0) {
+                let labels = histData.map((_,i) => i+1);
+                let values = histData;
+                html += `<canvas id='toolHistChart' width='400' height='200'></canvas>`;
+                contentDiv.innerHTML = html;
+                setTimeout(() => {
+                    let ctxHist = document.getElementById('toolHistChart').getContext('2d');
+                    new Chart(ctxHist, {
+                        type: 'line',
+                        data: {
+                            labels: labels,
+                            datasets: [{
+                                label: 'Value History',
+                                data: values,
+                                borderColor: '#198754',
+                                backgroundColor: 'rgba(25,135,84,0.2)',
+                                fill: true
+                            }]
+                        },
+                        options: {
+                            plugins: { title: { display: true, text: 'Value History' } },
+                            scales: { y: { beginAtZero: true } }
+                        }
+                    });
+                }, 100);
+            } else {
+                html += `<div class='alert alert-secondary mt-3'>No value history data available.</div>`;
+                contentDiv.innerHTML = html;
+            }
         } else {
-            contentDiv.innerHTML = `<div class='text-warning'>Unknown data type.</div>`;
+            html += `<div class='alert alert-warning mt-3'>Unknown data type: ${dataType}</div>`;
+            contentDiv.innerHTML = html;
         }
         modal.show();
     }

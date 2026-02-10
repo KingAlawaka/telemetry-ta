@@ -73,6 +73,7 @@ client = MongoClient(MONGO_URI)
 db = client[DB_NAME]
 collection = db[COLLECTION_NAME]
 mapped_collection = db[MAPPED_COLLECTION]
+removed_mapped_collection = db.get_collection('removed_mapped_requests')  # Collection for removed/reassigned mappings
 
 # Trust analyser configuration collections
 TRUST_CONFIG_COLLECTION = db.get_collection('trust_analyser_config')
@@ -401,12 +402,28 @@ async def submit_data(data: ToolData):
     doc = data.model_dump()
     mapped = list(mapped_collection.find({}))
     # print("map",mapped_collection.find_one({"unique_id_value": "RAD Observation Event"}))
-    # If no mappings, just save the request for later mapping
-    if not mapped:
+    
+    # Check if incoming request matches any existing mapping
+    is_mapped = False
+    for m in mapped:
+        unique_id_path = m.get("unique_id_path", "")
+        mapped_unique_id_value = m.get("unique_id_value", None)
+        incoming_unique_id_value = support_functions.get_by_path(data.payload, unique_id_path)
+        
+        # If request matches a mapping, don't save to tool_data collection
+        if (unique_id_path and mapped_unique_id_value is not None and 
+            incoming_unique_id_value is not None and 
+            str(incoming_unique_id_value) == str(mapped_unique_id_value)):
+            is_mapped = True
+            break
+    
+    # If no mappings found or request doesn't match any mapping, save to tool_data for later mapping
+    if not mapped or not is_mapped:
         result = collection.insert_one(doc)
         doc_copy = dict(doc)
         doc_copy["_id"] = str(result.inserted_id)
-        return {"status": "ok", "results": "Saved for later mapping (no mappings found)", "submitted_payload": doc_copy}
+        status_msg = "Saved for later mapping (no matching mappings found)" if not is_mapped else "Saved for later mapping (no mappings found)"
+        return {"status": "ok", "results": status_msg, "submitted_payload": doc_copy}
     
     # Update the most recent value for the submitting tool
     for m in mapped:
@@ -431,13 +448,13 @@ async def submit_data(data: ToolData):
                 if data_type in ['binary', 'categorical']:
                     freq_coll.update_one(
                         {'tool_name': tool_name, 'trust_evaluation_category': cat, 'value': value},
-                        {'$inc': {'count': 1}},
+                        {'$inc': {'count': 1}, '$set': {'data_type': data_type}},
                         upsert=True
                     )
                 elif data_type == 'continuous':
                     freq_coll.update_one(
                         {'tool_name': tool_name, 'trust_evaluation_category': cat},
-                        {'$push': {'values': value}},
+                        {'$push': {'values': value}, '$set': {'data_type': data_type}},
                         upsert=True
                     )
                 # Calculate trust score and behaviour
@@ -602,10 +619,69 @@ async def get_system_trust_score_history():
 @app.get("/tool-value-history/{tool_name}/{category}")
 async def get_tool_value_history(tool_name: str, category: str):
     freq_coll = db['tool_value_frequencies']
-    doc = freq_coll.find_one({'tool_name': tool_name, 'trust_evaluation_category': category})
-    if doc and 'values' in doc:
-        return doc['values']
+    # Look for the document containing continuous values
+    doc = freq_coll.find_one({
+        'tool_name': tool_name, 
+        'trust_evaluation_category': category
+    })
+    if doc:
+        # Return values if they exist
+        if 'values' in doc and isinstance(doc['values'], list):
+            return doc['values']
+        # If values don't exist but we have the doc, return empty (no data collected yet)
+        return []
+    # Check if there's any data at all for debugging
     return []
+
+# Debug endpoint to check what tool data exists in the database
+@app.get("/debug/tool-frequencies")
+async def debug_tool_frequencies():
+    freq_coll = db['tool_value_frequencies']
+    docs = list(freq_coll.find({}).limit(100))
+    result = []
+    for doc in docs:
+        doc_copy = dict(doc)
+        doc_copy['_id'] = str(doc_copy['_id'])
+        # Show counts or value lists for debugging
+        if 'values' in doc_copy:
+            doc_copy['values_count'] = len(doc_copy.get('values', []))
+        result.append(doc_copy)
+    return result
+
+# Endpoint to get tool data type for a tool in a specific category (including removed mappings)
+@app.get("/tool-data-type/{tool_name}/{category}")
+async def get_tool_data_type(tool_name: str, category: str):
+    """
+    Get the data type for a tool in a specific category.
+    First tries active mapping, then checks removed mapping, then infers from historical data.
+    """
+    # Try active mapped collection
+    mapped = mapped_collection.find_one({
+        'tool_name': tool_name,
+        'trust_evaluation_category': category
+    })
+    if mapped and 'data_type' in mapped:
+        return {"data_type": mapped['data_type'], "source": "active_mapping"}
+    
+    # Try removed mapped collection
+    removed_mapped = removed_mapped_collection.find_one({
+        'tool_name': tool_name,
+        'trust_evaluation_category': category
+    })
+    if removed_mapped and 'data_type' in removed_mapped:
+        return {"data_type": removed_mapped['data_type'], "source": "removed_mapping"}
+    
+    # Try to infer from trust_score_results (historical data)
+    trust_score_coll = db['trust_score_results']
+    trust_score = trust_score_coll.find_one({
+        'tool_name': tool_name,
+        'trust_evaluation_category': category
+    })
+    if trust_score and 'data_type' in trust_score:
+        return {"data_type": trust_score['data_type'], "source": "historical"}
+    
+    # Default
+    return {"data_type": "categorical", "source": "default"}
 
 # Endpoint to get all trust scores and behaviour categorisations
 @app.get("/dashboard/trust-scores")
@@ -632,7 +708,19 @@ async def get_dashboard_trust_scores():
 @app.get("/dashboard/system-behaviour")
 async def get_dashboard_system_behaviour():
     res = db['system_behaviour_result'].find_one({})
-    return JSONResponse({"system_behaviour": res.get('system_behaviour', 'normal') if res else 'normal'})
+    current_behaviour = res.get('system_behaviour', 'normal') if res else 'normal'
+    
+    # Get recent system behaviour history (last 10 evaluations)
+    hist_res = db['system_behaviour_history'].find_one({})
+    recent_behaviour = []
+    if hist_res and 'history' in hist_res:
+        # Get the last 10 items from history
+        recent_behaviour = hist_res['history'][-10:] if len(hist_res['history']) > 10 else hist_res['history']
+    
+    return JSONResponse({
+        "system_behaviour": current_behaviour,
+        "recent_behaviour": recent_behaviour
+    })
 
 @app.get("/data")
 async def get_data():
@@ -646,13 +734,35 @@ async def get_data():
 async def map_request(data: MapRequest):
     doc = data.model_dump()
     doc["count"] = 0
+    
+    unique_id_path = doc.get("unique_id_path")
+    unique_id_value = doc.get("unique_id_value")
+    
     # Remove min_value/max_value if not continuous
     if doc.get("data_type") != "continuous":
         doc.pop("min_value", None)
         doc.pop("max_value", None)
     # For backward compatibility, remove 'category' if present
     doc.pop("category", None)
+    
+    # Insert the new mapping
     mapped_collection.insert_one(doc)
+    
+    # Check all tool_data collection entries and remove ones that match this new mapping
+    if unique_id_path and unique_id_value:
+        # Find all tool_data entries that match the unique_id_path and unique_id_value
+        tool_data_entries = list(collection.find({}))
+        for entry in tool_data_entries:
+            try:
+                incoming_unique_id_value = support_functions.get_by_path(entry.get('payload', {}), unique_id_path)
+                # If tool_data entry matches the new mapping, remove it from tool_data
+                if (incoming_unique_id_value is not None and 
+                    str(incoming_unique_id_value) == str(unique_id_value)):
+                    collection.delete_one({"_id": entry["_id"]})
+            except Exception as e:
+                # Skip entries that can't be processed
+                continue
+    
     return {"status": "saved"}
 
 @app.get("/mapped")
@@ -662,6 +772,28 @@ async def get_mapped():
         doc["_id"] = str(doc["_id"])
         docs.append(doc)
     return docs
+
+@app.get("/mapped/removed")
+async def get_removed_mapped():
+    """Get all removed/reassigned mapped requests"""
+    docs = []
+    for doc in removed_mapped_collection.find():
+        doc["_id"] = str(doc["_id"])
+        docs.append(doc)
+    return docs
+
+@app.delete("/mapped/{request_id}")
+async def delete_mapped_request(request_id: str):
+    try:
+        # Convert string ID to ObjectId
+        obj_id = ObjectId(request_id)
+        result = mapped_collection.delete_one({"_id": obj_id})
+        if result.deleted_count == 1:
+            return {"status": "success", "message": "Mapped request deleted"}
+        else:
+            raise HTTPException(status_code=404, detail="Mapped request not found")
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"status": "fail", "error": str(e)})
     
 @app.delete("/data/{request_id}")
 async def delete_data(request_id: str):
