@@ -394,9 +394,6 @@ def calculate_trust_score_and_behaviour(tool, payload):
 
 @app.post("/submit")
 async def submit_data(data: ToolData):
-    if trust_cycle_config["enabled"] and trust_cycle_state["is_running"]:
-        trust_cycle_state["submissions"].append(data.model_dump())
-        return {"status": "ok", "message": "Data queued for batch analysis."}
     # print(data)
     # print("Received data:", data)
     doc = data.model_dump()
@@ -424,6 +421,10 @@ async def submit_data(data: ToolData):
         doc_copy["_id"] = str(result.inserted_id)
         status_msg = "Saved for later mapping (no matching mappings found)" if not is_mapped else "Saved for later mapping (no mappings found)"
         return {"status": "ok", "results": status_msg, "submitted_payload": doc_copy}
+
+    if trust_cycle_config["enabled"] and trust_cycle_state["is_running"]:
+        trust_cycle_state["submissions"].append(data.model_dump())
+        return {"status": "ok", "message": "Data queued for batch analysis."}
     
     # Update the most recent value for the submitting tool
     for m in mapped:
