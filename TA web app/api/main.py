@@ -21,6 +21,46 @@ sys.path.append(os.path.dirname(__file__))
 
 import support_functions as support_functions
 
+def process_value(value, processing_steps):
+    """
+    Processes a value through a series of transformations defined in processing_steps.
+    
+    Args:
+        value: The initial value to process
+        processing_steps: List of processing step dictionaries
+        
+    Example processing_steps:
+        [
+            {"type": "substring", "separator": ",", "index": 0},
+            {"type": "substring", "separator": ":", "index": 1}
+        ]
+    
+    Returns:
+        The processed value
+    """
+    if not processing_steps or not isinstance(processing_steps, list):
+        return value
+    
+    current_value = value
+    for step in processing_steps:
+        try:
+            if step.get("type") == "substring":
+                separator = step.get("separator", ",")
+                index = step.get("index", 0)
+                if isinstance(current_value, str):
+                    parts = current_value.split(separator)
+                    if 0 <= index < len(parts):
+                        current_value = parts[index].strip()
+            elif step.get("type") == "json_key":
+                key = step.get("key")
+                if isinstance(current_value, dict) and key in current_value:
+                    current_value = current_value[key]
+        except Exception as e:
+            print(f"Error processing value with step {step}: {e}")
+            continue
+    
+    return current_value
+
 class ToolData(BaseModel):
     tool_name: str
     time_stamp: str
@@ -38,6 +78,9 @@ class MapRequest(BaseModel):
     unique_id_value: Optional[str] = None
     value_path: str
     supplement: Optional[str] = None
+    # Value processing fields
+    value_processing_required: Optional[bool] = False
+    value_processing_steps: Optional[list] = None  # List of processing steps (e.g., [{"type": "substring", "separator": ",", "index": 0}])
 
 # Trust analysis cycle state
 trust_cycle_state = {
@@ -249,6 +292,10 @@ def calculate_trust_score_and_behaviour(tool, payload):
     step5_map = {f"{cfg.get('tool_name')}|||{(cfg.get('trust_evaluation_category') or 'Uncategorized').strip().lower()}": cfg for cfg in step5}
     value_path = tool.get('value_path')
     value = support_functions.get_by_path(payload, value_path) if value_path else None
+
+    if tool.get('value_processing_required') and tool.get('value_processing_steps'):
+        value = process_value(value, tool.get('value_processing_steps'))
+        print("Processed value TA cal:", value)
     # print(step5_map)
     count = tool.get('count', 1)
     # print("count ", count)
@@ -445,6 +492,12 @@ async def submit_data(data: ToolData):
                 data_type = m.get('data_type')
                 value_path = m.get('value_path')
                 value = support_functions.get_by_path(data.payload, value_path) if value_path else None
+                
+                # Apply value processing if configured
+                if m.get('value_processing_required') and m.get('value_processing_steps'):
+                    value = process_value(value, m.get('value_processing_steps'))
+                    print("Processed value:", value)
+                
                 freq_coll = db['tool_value_frequencies']
                 if data_type in ['binary', 'categorical']:
                     freq_coll.update_one(
@@ -498,6 +551,7 @@ async def submit_data(data: ToolData):
                         most_recent = db['tool_most_recent_values'].find_one({'tool_name': tool['tool_name'], 'trust_evaluation_category': cat})
                         payload = most_recent['payload'] if most_recent else None
                         if payload:
+                            print("tool",tool)
                             res = calculate_trust_score_and_behaviour(tool, payload)
                             beh_weight = behaviour_weights.get(res['behaviour'], 0)
                             cat_real_score += beh_weight * cat_weight
@@ -765,6 +819,67 @@ async def map_request(data: MapRequest):
                 continue
     
     return {"status": "saved"}
+
+@app.post("/value-processing/preview")
+async def preview_value_processing(request: Request):
+    """
+    Preview how a value will be split/processed with a given separator.
+    Used for setting up substring processing in value_path.
+    """
+    try:
+        data = await request.json()
+        value = data.get("value")
+        separator = data.get("separator", ",")
+        
+        if not value:
+            return {"error": "No value provided"}
+        
+        if not isinstance(value, str):
+            value = str(value)
+        
+        parts = value.split(separator)
+        return {
+            "original_value": value,
+            "separator": separator,
+            "parts": parts,
+            "part_count": len(parts),
+            "preview": [{"index": i, "value": part.strip()} for i, part in enumerate(parts)]
+        }
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+@app.post("/value-processing/save")
+async def save_value_processing(request: Request):
+    """
+    Save value processing configuration for a mapped request.
+    """
+    try:
+        data = await request.json()
+        mapping_id = data.get("mapping_id")
+        processing_steps = data.get("processing_steps", [])
+        value_processing_required = len(processing_steps) > 0
+        
+        if not mapping_id:
+            return {"error": "No mapping_id provided"}
+        
+        # Update the mapping with processing configuration
+        from bson import ObjectId
+        result = mapped_collection.update_one(
+            {"_id": ObjectId(mapping_id)},
+            {
+                "$set": {
+                    "value_processing_required": value_processing_required,
+                    "value_processing_steps": processing_steps
+                }
+            }
+        )
+        
+        if result.modified_count > 0:
+            return {"status": "success", "message": "Value processing configuration saved"}
+        else:
+            return {"status": "error", "message": "Mapping not found or not updated"}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
 
 @app.get("/mapped")
 async def get_mapped():
@@ -1254,6 +1369,10 @@ async def perform_batch_analysis():
                 data_type = mapping.get('data_type')
                 value_path = mapping.get('value_path')
                 value = support_functions.get_by_path(payload, value_path) if value_path else None
+                
+                # Apply value processing if configured
+                if mapping.get('value_processing_required') and mapping.get('value_processing_steps'):
+                    value = process_value(value, mapping.get('value_processing_steps'))
 
                 # ==== Categorize impact using Config 1 ====
                 impact = _categorize_impact_config1(mapping, value, step1_configs)
@@ -1384,6 +1503,10 @@ async def perform_batch_analysis():
             # Get value from most recent payload
             value_path = mapping.get('value_path')
             value = support_functions.get_by_path(payload, value_path) if payload and value_path else None
+            
+            # Apply value processing if configured
+            if mapping.get('value_processing_required') and mapping.get('value_processing_steps'):
+                value = process_value(value, mapping.get('value_processing_steps'))
 
             # Save tool behaviour result
             db['tool_behaviour_results'].update_one(

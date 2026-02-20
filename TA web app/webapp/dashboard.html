@@ -1143,6 +1143,59 @@
             win.document.write('<div class="mb-2"><label>Unique ID Value</label><input class="form-control" name="unique_id_value" id="uniqueIdValue" readonly></div>');
             win.document.write('<div class="mb-2"><label>Value Path</label><input class="form-control" name="value_path" id="valuePath" placeholder="e.g. payload.value"></div>');
             win.document.write('<div class="mb-2"><label>Supplement Info Path</label><input class="form-control" name="supplement" id="supplementPath" placeholder="e.g. payload.location"></div>');
+            
+            // Value processing section
+            win.document.write('<hr><h5>Value Processing (Optional)</h5>');
+            win.document.write('<div class="mb-2">');
+            win.document.write('  <div class="form-check form-switch">');
+            win.document.write('    <input class="form-check-input" type="checkbox" id="valueProcessingCheckbox">');
+            win.document.write('    <label class="form-check-label" for="valueProcessingCheckbox">');
+            win.document.write('      Special processing needed (substring, JSON key extraction, etc.)');
+            win.document.write('    </label>');
+            win.document.write('  </div>');
+            win.document.write('</div>');
+            
+            win.document.write('<div id="valueProcessingPanel" style="display:none;" class="card p-3 mb-3">');
+            win.document.write('  <div class="mb-3">');
+            win.document.write('    <label>Processing Type</label>');
+            win.document.write('    <select id="processingType" class="form-select">');
+            win.document.write('      <option value="">Select Processing Type</option>');
+            win.document.write('      <option value="substring">Substring (Split String)</option>');
+            win.document.write('      <option value="json_key">JSON Key Extraction</option>');
+            win.document.write('    </select>');
+            win.document.write('  </div>');
+            
+            // Substring Section
+            win.document.write('  <div id="substringSection" style="display:none;">');
+            win.document.write('    <div class="mb-2">');
+            win.document.write('      <label>Separator</label>');
+            win.document.write('      <input type="text" class="form-control" id="separator" placeholder="e.g., ,  :  _">');
+            win.document.write('    </div>');
+            win.document.write('    <div class="mb-2">');
+            win.document.write('      <label>Test Value</label>');
+            win.document.write('      <input type="text" class="form-control" id="testValue" placeholder="Enter a sample value to test">');
+            win.document.write('      <button type="button" class="btn btn-sm btn-info mt-2">Preview</button>');
+            win.document.write('    </div>');
+            win.document.write('    <div id="previewResult" class="alert alert-secondary mt-2" style="display:none;"></div>');
+            win.document.write('    <div class="mb-2">');
+            win.document.write('      <label>Select Index</label>');
+            win.document.write('      <select id="selectedIndex" class="form-select"></select>');
+            win.document.write('    </div>');
+            win.document.write('  </div>');
+            
+            // JSON Key Section
+            win.document.write('  <div id="jsonKeySection" style="display:none;">');
+            win.document.write('    <div class="mb-2">');
+            win.document.write('      <label>JSON Key</label>');
+            win.document.write('      <input type="text" class="form-control" id="jsonKey" placeholder="e.g., temperature, sensor_id">');
+            win.document.write('    </div>');
+            win.document.write('  </div>');
+            
+            win.document.write('  <div id="processingStepsList"></div>');
+            win.document.write('  <button type="button" class="btn btn-sm btn-primary" id="addStepBtn">Add Step</button>');
+            win.document.write('  <button type="button" class="btn btn-sm btn-secondary" id="clearStepsBtn">Clear All</button>');
+            win.document.write('</div>');
+            
             win.document.write('<div class="mb-2"><label>Payload (click a field to select its path):</label><div id="jsonTree" class="json-tree"></div></div>');
             win.document.write('<button type="submit" class="btn btn-success">Save Mapping</button>');
             win.document.write('</form></div>');
@@ -1218,7 +1271,155 @@
                     document.getElementById('uniqueIdValue').value = val !== undefined ? val : '';
                 });
             <\/script>`);
-            win.document.write('<script>document.getElementById("mapForm").onsubmit = async function(e) {e.preventDefault();const form = e.target;const data = Object.fromEntries(new FormData(form));await fetch("/map", {method: "POST",headers: {"Content-Type": "application/json"},body: JSON.stringify(data)});if(window.opener && window.opener.switchToMappedTab){window.opener.switchToMappedTab();}window.close();};<\/script>');
+            win.document.write(`<script>
+                // Value processing state
+                let processingSteps = [];
+                
+                // Checkbox toggle
+                document.getElementById('valueProcessingCheckbox').addEventListener('change', function() {
+                    document.getElementById('valueProcessingPanel').style.display = this.checked ? 'block' : 'none';
+                });
+                
+                // Processing type selector
+                document.getElementById('processingType').addEventListener('change', function() {
+                    document.getElementById('substringSection').style.display = this.value === 'substring' ? 'block' : 'none';
+                    document.getElementById('jsonKeySection').style.display = this.value === 'json_key' ? 'block' : 'none';
+                });
+                
+                // Preview button
+                document.querySelector('#substringSection .btn-info').addEventListener('click', async function() {
+                    const testValue = document.getElementById('testValue').value;
+                    const separator = document.getElementById('separator').value;
+                    if (!testValue || !separator) {
+                        alert('Please enter both test value and separator');
+                        return;
+                    }
+                    try {
+                        const response = await fetch('/value-processing/preview', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({value: testValue, separator: separator})
+                        });
+                        const data = await response.json();
+                        const resultDiv = document.getElementById('previewResult');
+                        if (data.preview && data.preview.length > 0) {
+                            let html = '<strong>Split Results:</strong><ul>';
+                            data.preview.forEach(p => {
+                                html += '<li>Index ' + p.index + ': ' + p.value + '</li>';
+                            });
+                            html += '</ul>';
+                            resultDiv.innerHTML = html;
+                            resultDiv.style.display = 'block';
+                            
+                            // Populate index selector
+                            const indexSelect = document.getElementById('selectedIndex');
+                            indexSelect.innerHTML = '';
+                            data.preview.forEach(p => {
+                                const option = document.createElement('option');
+                                option.value = p.index;
+                                option.text = 'Index ' + p.index + ': ' + p.value;
+                                indexSelect.appendChild(option);
+                            });
+                        }
+                    } catch(err) {
+                        alert('Error previewing: ' + err.message);
+                    }
+                });
+                
+                // Add step button
+                document.getElementById('addStepBtn').addEventListener('click', function() {
+                    const processingType = document.getElementById('processingType').value;
+                    if (!processingType) {
+                        alert('Please select a processing type');
+                        return;
+                    }
+                    
+                    let step = { type: processingType };
+                    
+                    if (processingType === 'substring') {
+                        const separator = document.getElementById('separator').value;
+                        const index = document.getElementById('selectedIndex').value;
+                        if (!separator || index === '' || index === undefined) {
+                            alert('Please fill in separator and select an index');
+                            return;
+                        }
+                        step = {
+                            type: 'substring',
+                            separator: separator,
+                            index: parseInt(index)
+                        };
+                    } else if (processingType === 'json_key') {
+                        const key = document.getElementById('jsonKey').value;
+                        if (!key) {
+                            alert('Please enter a JSON key');
+                            return;
+                        }
+                        step = {
+                            type: 'json_key',
+                            key: key
+                        };
+                    }
+                    
+                    processingSteps.push(step);
+                    updateStepsDisplay();
+                    
+                    // Clear form
+                    document.getElementById('processingType').value = '';
+                    document.getElementById('separator').value = '';
+                    document.getElementById('testValue').value = '';
+                    document.getElementById('jsonKey').value = '';
+                    document.getElementById('selectedIndex').innerHTML = '';
+                    document.getElementById('previewResult').style.display = 'none';
+                    document.getElementById('substringSection').style.display = 'none';
+                    document.getElementById('jsonKeySection').style.display = 'none';
+                });
+                
+                // Clear steps button
+                document.getElementById('clearStepsBtn').addEventListener('click', function() {
+                    processingSteps = [];
+                    updateStepsDisplay();
+                });
+                
+                // Update steps display
+                function updateStepsDisplay() {
+                    const stepsList = document.getElementById('processingStepsList');
+                    if (processingSteps.length === 0) {
+                        stepsList.innerHTML = '<p class="text-muted">No steps added yet</p>';
+                        return;
+                    }
+                    let html = '<p><strong>Processing Steps:</strong></p>';
+                    processingSteps.forEach((step, idx) => {
+                        if (step.type === 'substring') {
+                            html += '<span class="badge bg-primary me-2">Step ' + (idx+1) + ': Split by "' + step.separator + '" → Index ' + step.index + '</span>';
+                        } else if (step.type === 'json_key') {
+                            html += '<span class="badge bg-info me-2">Step ' + (idx+1) + ': Extract key "' + step.key + '"</span>';
+                        }
+                    });
+                    stepsList.innerHTML = html;
+                }
+                
+                // Form submission with value processing
+                document.getElementById('mapForm').onsubmit = async function(e) {
+                    e.preventDefault();
+                    const form = e.target;
+                    const data = Object.fromEntries(new FormData(form));
+                    
+                    // Add processing steps
+                    data.value_processing_required = processingSteps.length > 0;
+                    data.value_processing_steps = processingSteps;
+                    
+                    await fetch('/map', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(data)
+                    });
+                    
+                    if(window.opener && window.opener.switchToMappedTab){
+                        window.opener.switchToMappedTab();
+                    }
+                    window.close();
+                };
+            <\/script>`)
             win.document.write('</body></html>');
         }
         function switchToMappedTab() {
