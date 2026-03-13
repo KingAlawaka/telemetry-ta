@@ -20,6 +20,28 @@
         .card.p-3 { padding: 0.5rem !important; }
         .card h5 { font-size: 1rem; margin-bottom: 0.5rem; }
         .list-group { font-size: 0.85em; }
+        
+        /* Analysis Details Styling */
+        .cursor-pointer { cursor: pointer; }
+        .cursor-pointer:hover { background-color: #f5f5f5; }
+        .nav-tabs .nav-link {
+            color: #495057;
+            border: 1px solid #dee2e6;
+            border-bottom: none;
+        }
+        .nav-tabs .nav-link.active {
+            background-color: #0d6efd;
+            color: white;
+            border-color: #0d6efd;
+        }
+        .step-card {
+            background: white;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            padding: 15px;
+            margin: 10px 0;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
     </style>
 </head>
 
@@ -46,6 +68,10 @@
             <li class="nav-item" role="presentation">
                 <button class="nav-link" id="tool-config-tab" data-bs-toggle="tab" data-bs-target="#trust-score-config"
                     type="button" role="tab">Trust Score Configuration</button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="evaluation-reports-tab" data-bs-toggle="tab" data-bs-target="#evaluation-reports"
+                    type="button" role="tab">Evaluation Reports</button>
             </li>
         </ul>
         <!-- <ul class="list-group mt-3">
@@ -209,6 +235,30 @@
                     <div id="trust-score-config-weights"></div>
                     <button class="btn btn-secondary mt-3" id="calcTrustScoreBtn">Calculate Trust Score</button>
                     <div id="trust-score-result" class="mt-3"></div>
+                </div>
+            </div>
+            <div class="tab-pane fade" id="evaluation-reports" role="tabpanel">
+                <div class="mt-4">
+                    <h4>Trust Evaluation Reports</h4>
+                    <div class="mb-3 d-flex gap-2">
+                        <button class="btn btn-primary btn-sm" onclick="loadLatestEvaluationReport()">
+                            <i class="bi bi-arrow-clockwise"></i> Load Latest Report
+                        </button>
+                        <button class="btn btn-info btn-sm" onclick="showEvaluationReportHistory()">
+                            <i class="bi bi-clock-history"></i> Report History
+                        </button>
+                    </div>
+                    
+                    <!-- Loading Spinner -->
+                    <div id="reportLoadingSpinner" class="d-none">
+                        <div class="spinner-border" role="status">
+                            <span class="visually-hidden">Loading...</span>
+                        </div>
+                        <span class="ms-2">Loading evaluation report...</span>
+                    </div>
+                    
+                    <!-- Report Container -->
+                    <div id="evaluationReportContainer"></div>
                 </div>
             </div>
         </div>
@@ -1126,7 +1176,7 @@
             }
         }
         function openMapWindow(item) {
-            const win = window.open('', '_blank', 'width=900,height=700');
+            const win = window.open('', '_blank', 'width=1000,height=900');
             win.document.write('<!DOCTYPE html><html><head><title>Map Payload</title><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css"><style>.json-tree{font-family:monospace;font-size:0.95em;}.json-key{color:#007bff;cursor:pointer;}.json-leaf{color:#333;cursor:pointer;}.json-branch{margin-left:1em;}</style></head><body>');
             win.document.write('<div class="container mt-4"><h2>Map Payload</h2>');
             win.document.write('<form id="mapForm">');
@@ -1196,6 +1246,54 @@
             win.document.write('  <button type="button" class="btn btn-sm btn-secondary" id="clearStepsBtn">Clear All</button>');
             win.document.write('</div>');
             
+            // Evaluation mode selector
+            win.document.write('<hr><h5>Evaluation Mode</h5>');
+            win.document.write('<div class="mb-3">');
+            win.document.write('  <div class="form-check">');
+            win.document.write('    <input class="form-check-input" type="radio" name="evaluation_mode" value="simple" id="modeSimple" checked>');
+            win.document.write('    <label class="form-check-label" for="modeSimple">Simple (Value Path Only)</label>');
+            win.document.write('  </div>');
+            win.document.write('  <div class="form-check">');
+            win.document.write('    <input class="form-check-input" type="radio" name="evaluation_mode" value="advanced" id="modeAdvanced">');
+            win.document.write('    <label class="form-check-label" for="modeAdvanced">Advanced (Multi-Field Evaluation)</label>');
+            win.document.write('  </div>');
+            win.document.write('</div>');
+            
+            // Advanced rules panel - STEP 1: Select Secondary Fields
+            win.document.write('<div id="advancedRulesPanel" style="display:none;" class="card p-3 mb-3 border-info">');
+            win.document.write('  <div class="card-header bg-info text-white"><strong>Step 1: Select Secondary Value Fields</strong></div>');
+            win.document.write('  <div class="card-body">');
+            win.document.write('    <p class="text-muted small mb-3">Primary Value: <strong id="primaryValueDisplay">Value Path</strong></p>');
+            win.document.write('    <p class="text-muted small mb-3">Select additional fields to use in evaluation rules:</p>');
+            win.document.write('    <div id="secondaryFieldsList" class="mb-3"></div>');
+            win.document.write('    <button type="button" class="btn btn-sm btn-success" id="addSecondaryFieldBtn">+ Add Secondary Field</button>');
+            win.document.write('  </div>');
+            win.document.write('</div>');
+            
+            // Advanced rules panel - STEP 2: Define Rules
+            win.document.write('<div id="defineRulesPanel" style="display:none;" class="card p-3 mb-3 border-success">');
+            win.document.write('  <div class="card-header bg-success text-white"><strong>Step 2: Define Evaluation Rules</strong></div>');
+            win.document.write('  <div class="card-body">');
+            win.document.write('    <p class="text-muted small mb-3">Create evaluation rules combining primary and secondary fields:</p>');
+            win.document.write('    <div id="rulesList" class="mb-3"></div>');
+            win.document.write('    <button type="button" class="btn btn-sm btn-primary" id="addRuleBtn">+ Add Rule</button>');
+            win.document.write('    <button type="button" class="btn btn-sm btn-secondary" id="clearRulesBtn" style="display:none;">Clear All Rules</button>');
+            win.document.write('    <hr id="rulesSeparator" style="display:none;">');
+            win.document.write('    <div id="betweenRulesConnectorPanel" style="display:none;" class="mt-4 pt-3 border-top">');
+            win.document.write('      <h6 class="text-warning mb-3"><i class="bi bi-diagram-3"></i> Between-Rules Connector</h6>');
+            win.document.write('      <p class="text-muted small mb-3">When multiple rules are defined, select how to combine their outcomes:</p>');
+            win.document.write('      <div class="mb-3">');
+            win.document.write('        <label class="form-label"><strong>Combine Multiple Rules With:</strong></label>');
+            win.document.write('        <select class="form-select" id="betweenRulesConnectorSelect">');
+            win.document.write('          <option value="AND">AND - All rules must match</option>');
+            win.document.write('          <option value="OR">OR - At least one rule must match</option>');
+            win.document.write('        </select>');
+            win.document.write('        <small class="text-muted d-block mt-2"><strong>Impact Level:</strong> Selected from all matched rules (high > medium > low)</small>');
+            win.document.write('      </div>');
+            win.document.write('    </div>');
+            win.document.write('  </div>');
+            win.document.write('</div>');
+            
             win.document.write('<div class="mb-2"><label>Payload (click a field to select its path):</label><div id="jsonTree" class="json-tree"></div></div>');
             win.document.write('<button type="submit" class="btn btn-success">Save Mapping</button>');
             win.document.write('</form></div>');
@@ -1228,10 +1326,27 @@
                     let html = '<ul style="list-style:none;padding-left:1em;">';
                     for (const key in obj) {
                         const newPath = path ? path + '.' + key : key;
-                        if (typeof obj[key] === 'object' && obj[key] !== null) {
-                            html += \`<li><span class='json-key' onclick="selectPath('\${newPath}')">\${key}</span>: <span class='json-branch'>\` + renderTree(obj[key], newPath) + '</span></li>';
+                        const val = obj[key];
+                        let typeLabel = '';
+                        
+                        // Determine data type
+                        if (typeof val === 'object' && val !== null) {
+                            if (Array.isArray(val)) {
+                                typeLabel = ' <span class="badge bg-info" style="font-size:0.75em;">array</span>';
+                            } else {
+                                typeLabel = ' <span class="badge bg-secondary" style="font-size:0.75em;">object</span>';
+                            }
+                            html += \`<li><span class='json-key' onclick="selectPath('\${newPath}')" title="Click to select">\${key}\${typeLabel}</span>: <span class='json-branch'>\` + renderTree(val, newPath) + '</span></li>';
                         } else {
-                            html += \`<li><span class='json-key' onclick="selectPath('\${newPath}')">\${key}</span>: <span class='json-leaf' onclick="selectPath('\${newPath}')">\${obj[key]}</span></li>\`;
+                            // Leaf node - show type
+                            if (typeof val === 'number') {
+                                typeLabel = ' <span class="badge bg-warning text-dark" style="font-size:0.75em;">number</span>';
+                            } else if (typeof val === 'boolean') {
+                                typeLabel = ' <span class="badge bg-danger" style="font-size:0.75em;">boolean</span>';
+                            } else {
+                                typeLabel = ' <span class="badge bg-success" style="font-size:0.75em;">string</span>';
+                            }
+                            html += \`<li><span class='json-key' onclick="selectPath('\${newPath}')" title="Click to select">\${key}\${typeLabel}</span>: <span class='json-leaf' onclick="selectPath('\${newPath}')" title="Click to select">\${val}</span></li>\`;
                         }
                     }
                     html += '</ul>';
@@ -1253,11 +1368,29 @@
                 }
                 function selectPath(path) {
                     const field = window.selectedField || 'uniqueIdPath';
-                    document.getElementById(field).value = path;
-                    if(field === 'uniqueIdPath') {
-                        // Set the unique id value automatically
-                        const val = getByPath(${JSON.stringify(item.payload)}, path);
-                        document.getElementById('uniqueIdValue').value = val !== undefined ? val : '';
+                    const payload = ${JSON.stringify(item.payload)};
+                    const val = getByPath(payload, path);
+                    
+                    if (field === 'addSecondaryField') {
+                        // Adding a secondary field - detect data type
+                        let dataType = 'string';
+                        if (typeof val === 'number') {
+                            dataType = 'int';
+                        } else if (typeof val === 'boolean') {
+                            dataType = 'boolean';
+                        }
+                        
+                        // Add to secondary fields
+                        if (window.addSecondaryField) {
+                            window.addSecondaryField(path, dataType);
+                        }
+                    } else {
+                        // Regular path selection
+                        document.getElementById(field).value = path;
+                        if(field === 'uniqueIdPath') {
+                            // Set the unique id value automatically
+                            document.getElementById('uniqueIdValue').value = val !== undefined ? val : '';
+                        }
                     }
                 }
                 window.selectedField = 'uniqueIdPath';
@@ -1398,6 +1531,456 @@
                     stepsList.innerHTML = html;
                 }
                 
+                // Advanced rules system
+                let advancedRules = [];
+                const availableOperators = {
+                    string: ['equals', 'not_equals', 'contains', 'not_contains', 'starts_with', 'ends_with', 'regex_match', 'length_equals', 'length_greater_than'],
+                    numeric: ['equals', 'not_equals', 'greater_than', 'less_than', 'between', 'greater_equal', 'less_equal', 'divisible_by'],
+                    boolean: ['is_true', 'is_false', 'equals']
+                };
+                
+                // Add rule button
+                document.getElementById('addRuleBtn').addEventListener('click', function() {
+                    showRuleModal(null);
+                });
+                
+                // Secondary fields management
+                let secondaryFields = [];
+                
+                // Update primary value display
+                document.getElementById('valuePath').addEventListener('change', function() {
+                    document.getElementById('primaryValueDisplay').textContent = this.value || 'Value Path';
+                });
+                
+                // Evaluation mode toggle
+                document.getElementById('modeSimple').addEventListener('change', function() {
+                    document.getElementById('advancedRulesPanel').style.display = 'none';
+                    document.getElementById('defineRulesPanel').style.display = 'none';
+                });
+                document.getElementById('modeAdvanced').addEventListener('change', function() {
+                    document.getElementById('advancedRulesPanel').style.display = 'block';
+                    if (secondaryFields.length > 0) {
+                        document.getElementById('defineRulesPanel').style.display = 'block';
+                    }
+                });
+                
+                // Add secondary field button
+                document.getElementById('addSecondaryFieldBtn').addEventListener('click', function() {
+                    // Set mode to pick from tree
+                    window.selectedField = 'addSecondaryField';
+                    alert('Click on a field in the JSON tree below to add it as a secondary field');
+                });
+                
+                function updateSecondaryFieldsList() {
+                    const list = document.getElementById('secondaryFieldsList');
+                    list.innerHTML = '';
+                    
+                    if (secondaryFields.length === 0) {
+                        list.innerHTML = '<p class="text-muted small">No secondary fields selected yet</p>';
+                        document.getElementById('defineRulesPanel').style.display = 'none';
+                        return;
+                    }
+                    
+                    secondaryFields.forEach((field, index) => {
+                        const fieldDiv = document.createElement('div');
+                        fieldDiv.className = 'badge bg-info me-2 mb-2 p-2';
+                        fieldDiv.innerHTML = '<span><strong>' + field.path + '</strong> <span class="badge bg-secondary">' + field.dataType + '</span></span> <button type="button" class="btn btn-sm btn-link text-white ms-2" onclick="removeSecondaryField(' + index + ')">×</button>';
+                        list.appendChild(fieldDiv);
+                    });
+                    
+                    // Show rules panel if advanced mode is selected
+                    if (secondaryFields.length > 0 && document.getElementById('modeAdvanced').checked) {
+                        document.getElementById('defineRulesPanel').style.display = 'block';
+                    }
+                }
+                
+                window.removeSecondaryField = function(index) {
+                    secondaryFields.splice(index, 1);
+                    updateSecondaryFieldsList();
+                };
+                
+                window.addSecondaryField = function(path, dataType) {
+                    if (!secondaryFields.some(f => f.path === path)) {
+                        secondaryFields.push({ path, dataType });
+                        updateSecondaryFieldsList();
+                        // Clear the mode after adding
+                        window.selectedField = 'uniqueIdPath';
+                    } else {
+                        alert('This field is already selected');
+                    }
+                };
+                
+                // Clear rules button
+                document.getElementById('clearRulesBtn').addEventListener('click', function() {
+                    if (confirm('Clear all rules?')) {
+                        advancedRules = [];
+                        updateRulesDisplay();
+                    }
+                });
+                
+                function updateRulesDisplay() {
+                    const rulesList = document.getElementById('rulesList');
+                    const betweenRulesPanel = document.getElementById('betweenRulesConnectorPanel');
+                    const rulesSeparator = document.getElementById('rulesSeparator');
+                    
+                    if (advancedRules.length === 0) {
+                        rulesList.innerHTML = '<p class="text-muted">No rules defined yet. Click "Add Rule" to create one.</p>';
+                        if (betweenRulesPanel) betweenRulesPanel.style.display = 'none';
+                        if (rulesSeparator) rulesSeparator.style.display = 'none';
+                        return;
+                    }
+                    
+                    // Show between-rules connector and separator only if 2+ rules
+                    if (betweenRulesPanel) {
+                        betweenRulesPanel.style.display = advancedRules.length >= 2 ? 'block' : 'none';
+                    }
+                    if (rulesSeparator) {
+                        rulesSeparator.style.display = advancedRules.length >= 2 ? 'block' : 'none';
+                    }
+                    
+                    let html = '<div class="mb-3"><strong>Rules (' + advancedRules.length + '):</strong></div>';
+                    advancedRules.forEach((rule, idx) => {
+                        html += '<div class="card mb-2 p-2"><div class="d-flex justify-content-between align-items-center">';
+                        html += '<div><strong>' + rule.name + '</strong><br>';
+                        html += '<span class="text-secondary small">';
+                        html += 'Primary: ' + rule.primary_field_path + ' = ' + rule.primary_value + ' | ';
+                        html += 'Within-Rule: ' + (rule.within_rule_connector || rule.conditions_connector || 'AND') + ' | ';
+                        html += 'Impact: ' + rule.impact_level + ' | ';
+                        html += 'Status: ' + (rule.enabled ? '✓ Enabled' : '✗ Disabled') + '';
+                        html += '</span></div>';
+                        html += '<div><button type="button" class="btn btn-sm btn-warning" data-rule-idx="' + idx + '" onclick="editRule(this)">Edit</button> ';
+                        html += '<button type="button" class="btn btn-sm btn-danger" data-rule-idx="' + idx + '" onclick="deleteRule(this)">Delete</button></div>';
+                        html += '</div></div>';
+                    });
+                    rulesList.innerHTML = html;
+                }
+                
+                function editRule(btn) {
+                    const idx = parseInt(btn.getAttribute('data-rule-idx'));
+                    showRuleModal(idx);
+                }
+                
+                function deleteRule(btn) {
+                    const idx = parseInt(btn.getAttribute('data-rule-idx'));
+                    if (confirm('Delete rule: ' + advancedRules[idx].name + '?')) {
+                        advancedRules.splice(idx, 1);
+                        updateRulesDisplay();
+                    }
+                }
+                
+                function showRuleModal(editIdx) {
+                    const isEdit = editIdx !== null;
+                    const rule = isEdit ? advancedRules[editIdx] : { name: '', condition_groups: [], group_connector: 'AND', impact_level: 'medium', enabled: true };
+                    
+                    // Create modal HTML
+                    let modalHtml = '<div class="modal fade" id="ruleModal"><div class="modal-dialog modal-lg"><div class="modal-content">';
+                    modalHtml += '<div class="modal-header"><h5>' + (isEdit ? 'Edit' : 'Add New') + ' Rule</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>';
+                    modalHtml += '<div class="modal-body">';
+                    
+                    // Rule name
+                    modalHtml += '<div class="mb-3"><label class="form-label">Rule Name</label><input type="text" class="form-control" id="ruleName" value="' + (rule.name || '') + '" placeholder="e.g., Admin User Check"></div>';
+                    
+                    // Impact level
+                    modalHtml += '<div class="mb-3"><label class="form-label">Impact Level</label>';
+                    modalHtml += '<select class="form-select" id="ruleImpactLevel">';
+                    ['low', 'medium', 'high'].forEach(lvl => {
+                        modalHtml += '<option value="' + lvl + '" ' + (rule.impact_level === lvl ? 'selected' : '') + '>' + lvl.charAt(0).toUpperCase() + lvl.slice(1) + '</option>';
+                    });
+                    modalHtml += '</select></div>';
+                    
+                    // Enabled toggle
+                    modalHtml += '<div class="mb-3"><div class="form-check"><input class="form-check-input" type="checkbox" id="ruleEnabled" ' + (rule.enabled ? 'checked' : '') + '><label class="form-check-label" for="ruleEnabled">Enable this rule</label></div></div>';
+                    
+                    // ========== WITHIN-RULE CONNECTOR ==========
+                    modalHtml += '<hr><h6 class="text-primary"><i class="bi bi-diagram-2"></i> Within-Rule Connector</h6>';
+                    modalHtml += '<p class="text-muted small mb-3">How to combine the primary field with secondary conditions inside this rule:</p>';
+                    
+                    // Simple condition builder
+                    modalHtml += '<hr><h6>Rule Conditions</h6>';
+                    modalHtml += '<p class="text-muted small">Define a primary field match and add secondary field conditions:</p>';
+                    
+                    // Get primary value field path and payload data
+                    const primaryValuePath = document.getElementById('valuePath') ? document.getElementById('valuePath').value : 'value_path';
+                    const payloadData = ${JSON.stringify(item.payload)};
+                    
+                    // Helper function to get value from path
+                    function getValueFromPath(obj, path) {
+                        const parts = path.split('.');
+                        let val = obj;
+                        for (const p of parts) {
+                            if (val && typeof val === 'object' && p in val) {
+                                val = val[p];
+                            } else {
+                                return null;
+                            }
+                        }
+                        return val;
+                    }
+                    
+                    const primaryFieldValue = getValueFromPath(payloadData, primaryValuePath);
+                    const dataType = document.getElementById('dataTypeSelect') ? document.getElementById('dataTypeSelect').value : 'categorical';
+                    
+                    // Primary field info (read-only)
+                    modalHtml += '<div class="card mb-3 p-3 bg-light"><h6>Primary Field</h6>';
+                    modalHtml += '<div class="mb-2"><label class="form-label">Field Path</label>';
+                    modalHtml += '<input type="text" class="form-control" readonly value="' + primaryValuePath + '"></div>';
+                    
+                    // Show input based on data type
+                    if (dataType === 'continuous') {
+                        modalHtml += '<div class="mb-2"><label class="form-label">Value (Number)</label>';
+                        modalHtml += '<input type="number" class="form-control" id="conditionPrimaryValue" placeholder="Enter numeric value" value="' + (primaryFieldValue || '') + '"></div>';
+                    } else if (dataType === 'binary') {
+                        modalHtml += '<div class="mb-2"><label class="form-label">Value (Binary)</label>';
+                        modalHtml += '<select class="form-select" id="conditionPrimaryValue">';
+                        modalHtml += '<option value="">-- Select value --</option>';
+                        modalHtml += '<option value="true">True</option>';
+                        modalHtml += '<option value="false">False</option>';
+                        modalHtml += '</select></div>';
+                    } else {
+                        modalHtml += '<div class="mb-2"><label class="form-label">Value (Categorical)</label>';
+                        modalHtml += '<input type="text" class="form-control" id="conditionPrimaryValue" placeholder="Enter value" value="' + (primaryFieldValue || '') + '"></div>';
+                    }
+                    modalHtml += '</div>';
+                    
+                    // Secondary fields conditions builder
+                    modalHtml += '<div class="card mb-3 p-3"><h6>Secondary Field Conditions</h6>';
+                    modalHtml += '<p class="text-muted small mb-3">Add one or more secondary field evaluations:</p>';
+                    
+                    // Secondary fields list
+                    modalHtml += '<div id="secondaryConditionsList" class="mb-3"></div>';
+                    
+                    // Add secondary condition button
+                    modalHtml += '<button type="button" class="btn btn-sm btn-success" id="addSecondaryConditionBtn">+ Add Secondary Field Condition</button>';
+                    
+                    // Within-rule connector selector (for secondary conditions)
+                    modalHtml += '<div class="mt-3 p-3 bg-light border-left-primary">';
+                    modalHtml += '<label class="form-label"><strong>Primary Field + Secondary Conditions:</strong></label>';
+                    modalHtml += '<p class="text-muted small mb-2">The primary field must always match. Secondary conditions are combined with:</p>';
+                    modalHtml += '<select class="form-select" id="secondaryConditionsConnector">';
+                    modalHtml += '<option value="AND">AND - Primary must match AND all secondary conditions must match</option>';
+                    modalHtml += '<option value="OR">OR - Primary must match AND at least one secondary condition must match</option>';
+                    modalHtml += '</select>';
+                    modalHtml += '</div>';
+                    modalHtml += '</div>';
+                    
+                    modalHtml += '</div>';
+                    modalHtml += '<div class="modal-footer"><button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>';
+                    modalHtml += '<button type="button" class="btn btn-primary" id="saveRuleBtn">Save Rule</button></div>';
+                    modalHtml += '</div></div></div>';
+                    
+                    // Create and show modal
+                    const modalDiv = document.createElement('div');
+                    modalDiv.innerHTML = modalHtml;
+                    document.body.appendChild(modalDiv);
+                    
+                    const modalEl = modalDiv.querySelector('#ruleModal');
+                    const modal = new bootstrap.Modal(modalEl);
+                    
+                    // Use modalDiv for scoped queries
+                    const ruleName = modalDiv.querySelector('#ruleName');
+                    const ruleImpactLevel = modalDiv.querySelector('#ruleImpactLevel');
+                    const ruleEnabled = modalDiv.querySelector('#ruleEnabled');
+                    const saveRuleBtn = modalDiv.querySelector('#saveRuleBtn');
+                    const conditionPrimaryValue = modalDiv.querySelector('#conditionPrimaryValue');
+                    const secondaryConditionsList = modalDiv.querySelector('#secondaryConditionsList');
+                    const addSecondaryConditionBtn = modalDiv.querySelector('#addSecondaryConditionBtn');
+                    const secondaryConditionsConnector = modalDiv.querySelector('#secondaryConditionsConnector');
+                    
+                    // Store secondary conditions for this rule
+                    let secondaryConditions = [];
+                    
+                    // Update secondary conditions list display
+                    function updateSecondaryConditionsList() {
+                        if (secondaryConditions.length === 0) {
+                            secondaryConditionsList.innerHTML = '<p class="text-muted small">No conditions added yet</p>';
+                            return;
+                        }
+                        
+                        let html = '<div class="list-group">';
+                        secondaryConditions.forEach((cond, idx) => {
+                            html += '<div class="list-group-item p-2">';
+                            html += '<div class="d-flex justify-content-between align-items-start">';
+                            html += '<small><strong>' + cond.secondary_field + '</strong> ' + cond.operator + ' ' + cond.secondary_value + '</small>';
+                            html += '<button type="button" class="btn btn-sm btn-danger" onclick="removeSecondaryCondition(' + idx + ')">Remove</button>';
+                            html += '</div>';
+                            html += '</div>';
+                        });
+                        html += '</div>';
+                        secondaryConditionsList.innerHTML = html;
+                    }
+                    
+                    // Add secondary condition
+                    window.removeSecondaryCondition = function(idx) {
+                        secondaryConditions.splice(idx, 1);
+                        updateSecondaryConditionsList();
+                    };
+                    
+                    addSecondaryConditionBtn.addEventListener('click', function() {
+                        // Create form for adding new secondary condition
+                        let condHtml = '<div class="card p-3 mt-3 bg-light">';
+                        condHtml += '<h6>New Secondary Condition</h6>';
+                        
+                        // Secondary field selector
+                        condHtml += '<div class="mb-3"><label class="form-label">Secondary Field</label>';
+                        condHtml += '<select id="tempSecondaryField" class="form-select"><option value="">-- Select field --</option>';
+                        if (secondaryFields && secondaryFields.length > 0) {
+                            secondaryFields.forEach(field => {
+                                condHtml += '<option value="' + field.path + '" data-type="' + field.dataType + '">' + field.path + ' (' + field.dataType + ')</option>';
+                            });
+                        }
+                        condHtml += '</select></div>';
+                        
+                        // Operator selector
+                        condHtml += '<div class="mb-3"><label class="form-label">Operator</label>';
+                        condHtml += '<select id="tempOperator" class="form-select"><option value="">-- Select operator --</option>';
+                        const stringOps = ['equals', 'not_equals', 'contains', 'not_contains', 'starts_with', 'ends_with'];
+                        stringOps.forEach(op => {
+                            condHtml += '<option value="' + op + '" data-type="string">' + op.replace(/_/g, ' ') + '</option>';
+                        });
+                        const numericOps = ['greater_than', 'less_than', 'greater_equal', 'less_equal', 'between'];
+                        numericOps.forEach(op => {
+                            condHtml += '<option value="' + op + '" data-type="numeric">' + op.replace(/_/g, ' ') + '</option>';
+                        });
+                        condHtml += '</select></div>';
+                        
+                        // Value input
+                        condHtml += '<div class="mb-3"><label class="form-label">Value to Evaluate</label>';
+                        condHtml += '<input type="text" id="tempValue" class="form-control" placeholder="Enter value"></div>';
+                        
+                        // Buttons
+                        condHtml += '<button type="button" class="btn btn-sm btn-primary" id="confirmConditionBtn">Add Condition</button>';
+                        condHtml += '<button type="button" class="btn btn-sm btn-secondary" id="cancelConditionBtn">Cancel</button>';
+                        condHtml += '</div>';
+                        
+                        // Insert temp form
+                        addSecondaryConditionBtn.insertAdjacentHTML('beforebegin', condHtml);
+                        addSecondaryConditionBtn.style.display = 'none';
+                        
+                        const tempField = modalDiv.querySelector('#tempSecondaryField');
+                        const tempOperator = modalDiv.querySelector('#tempOperator');
+                        const tempValue = modalDiv.querySelector('#tempValue');
+                        const confirmBtn = modalDiv.querySelector('#confirmConditionBtn');
+                        const cancelBtn = modalDiv.querySelector('#cancelConditionBtn');
+                        
+                        // Filter operators based on field type
+                        tempField.addEventListener('change', function() {
+                            const fieldType = this.options[this.selectedIndex].getAttribute('data-type');
+                            Array.from(tempOperator.querySelectorAll('option')).forEach(opt => {
+                                if (opt.value === '') {
+                                    opt.style.display = '';
+                                } else {
+                                    opt.style.display = (opt.getAttribute('data-type') === fieldType) ? '' : 'none';
+                                }
+                            });
+                            tempOperator.value = '';
+                        });
+                        
+                        confirmBtn.addEventListener('click', function() {
+                            const field = tempField.value;
+                            const op = tempOperator.value;
+                            const val = tempValue.value.trim();
+                            
+                            if (!field || !op || !val) {
+                                alert('Please fill in all fields');
+                                return;
+                            }
+                            
+                            secondaryConditions.push({
+                                secondary_field: field,
+                                operator: op,
+                                secondary_value: val
+                            });
+                            
+                            // Remove temp form
+                            modalDiv.querySelector('.card.p-3.mt-3.bg-light').remove();
+                            addSecondaryConditionBtn.style.display = 'inline-block';
+                            updateSecondaryConditionsList();
+                        });
+                        
+                        cancelBtn.addEventListener('click', function() {
+                            modalDiv.querySelector('.card.p-3.mt-3.bg-light').remove();
+                            addSecondaryConditionBtn.style.display = 'inline-block';
+                        });
+                    });
+                    
+                    // Save rule button
+                    saveRuleBtn.addEventListener('click', function() {
+                        const name = ruleName.value.trim();
+                        if (!name) {
+                            alert('Please enter a rule name');
+                            return;
+                        }
+                        
+                        const primaryValue = conditionPrimaryValue.value.trim();
+                        if (!primaryValue) {
+                            alert('Please enter primary field value');
+                            return;
+                        }
+                        
+                        if (secondaryConditions.length === 0) {
+                            alert('Please add at least one secondary field condition');
+                            return;
+                        }
+                        
+                        // Create rule with primary value and multiple secondary conditions
+                        rule.primary_field_path = primaryValuePath;
+                        rule.primary_value = primaryValue;
+                        rule.secondary_conditions = secondaryConditions;
+                        rule.within_rule_connector = secondaryConditionsConnector.value;  // New: within-rule connector
+                        rule.name = name;
+                        rule.impact_level = ruleImpactLevel.value;
+                        rule.enabled = ruleEnabled.checked;
+                        
+                        if (isEdit) {
+                            advancedRules[editIdx] = rule;
+                        } else {
+                            advancedRules.push(rule);
+                        }
+                        
+                        updateRulesDisplay();
+                        modal.hide();
+                        setTimeout(() => modalDiv.remove(), 300);
+                    });
+                    
+                    // Close modal cleanup
+                    modalEl.addEventListener('hidden.bs.modal', () => {
+                        setTimeout(() => modalDiv.remove(), 10);
+                    });
+                    
+                    modal.show();
+                }
+                
+                function updateConditionGroupsDisplay(groups, container) {
+                    if (!container) {
+                        container = document.getElementById('conditionGroupsList');
+                    }
+                    if (!groups || groups.length === 0) {
+                        container.innerHTML = '<p class="text-muted small">No condition groups yet</p>';
+                        return;
+                    }
+                    let html = '';
+                    groups.forEach((grp, gIdx) => {
+                        html += '<div class="card mb-2 p-2"><div class="d-flex justify-content-between align-items-start">';
+                        html += '<div class="flex-grow-1">';
+                        html += '<small><strong>Group ' + (gIdx + 1) + ':</strong> ' + (grp.conditions ? grp.conditions.length : 0) + ' condition(s), Connector: <strong>' + grp.connector + '</strong></small>';
+                        html += '</div>';
+                        html += '<button type="button" class="btn btn-sm btn-warning ms-2" onclick="editConditionGroup(' + gIdx + ')">Edit</button> ';
+                        html += '<button type="button" class="btn btn-sm btn-danger" onclick="deleteConditionGroup(' + gIdx + ')">Delete</button>';
+                        html += '</div></div>';
+                    });
+                    container.innerHTML = html;
+                }
+                
+                function editConditionGroup(gIdx) {
+                    alert('Condition group editing not yet implemented in demo. You can manually add conditions via the API.');
+                }
+                function deleteConditionGroup(gIdx) {
+                    const modalBody = document.querySelector('.modal-body');
+                    const rule = { condition_groups: [] };
+                    // This would need proper implementation to access the rule from modal
+                    alert('Deletion in demo view - use API for full management');
+                }
+                
                 // Form submission with value processing
                 document.getElementById('mapForm').onsubmit = async function(e) {
                     e.preventDefault();
@@ -1407,6 +1990,22 @@
                     // Add processing steps
                     data.value_processing_required = processingSteps.length > 0;
                     data.value_processing_steps = processingSteps;
+                    
+                    // Add secondary fields if in advanced mode
+                    const evaluationMode = document.querySelector('input[name="evaluation_mode"]:checked').value;
+                    data.evaluation_mode = evaluationMode;
+                    data.secondary_value_fields = secondaryFields;
+                    
+                    // Add advanced rules if in advanced mode
+                    if (evaluationMode === 'advanced' && advancedRules.length > 0) {
+                        data.advanced_rules = advancedRules;
+                        // Add between-rules connector
+                        const betweenRulesConnectorSelect = document.getElementById('betweenRulesConnectorSelect');
+                        data.between_rules_connector = betweenRulesConnectorSelect ? betweenRulesConnectorSelect.value : 'AND';
+                    } else {
+                        data.advanced_rules = null;
+                        data.between_rules_connector = 'AND';
+                    }
                     
                     await fetch('/map', {
                         method: 'POST',
@@ -1419,7 +2018,11 @@
                     }
                     window.close();
                 };
+                
+                // Initialize rules display on form load
+                updateRulesDisplay();
             <\/script>`)
+            win.document.write('<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"><\/script>');
             win.document.write('</body></html>');
         }
         function switchToMappedTab() {
@@ -2278,6 +2881,679 @@
         }
         modal.show();
     }
+    
+    // ============ EVALUATION REPORTS FUNCTIONS ============
+    
+    async function loadLatestEvaluationReport() {
+        try {
+            const spinner = document.getElementById('reportLoadingSpinner');
+            const container = document.getElementById('evaluationReportContainer');
+            
+            spinner.classList.remove('d-none');
+            container.innerHTML = '';
+            
+            const response = await fetch('/trust-evaluation-reports/latest');
+            if (!response.ok) {
+                spinner.classList.add('d-none');
+                container.innerHTML = '<div class="alert alert-info">No evaluation reports found. Submit data to generate reports.</div>';
+                return;
+            }
+            
+            const data = await response.json();
+            const report = data.report;
+            
+            spinner.classList.add('d-none');
+            renderEvaluationReport(report);
+        } catch (error) {
+            console.error('Error loading report:', error);
+            document.getElementById('reportLoadingSpinner').classList.add('d-none');
+            document.getElementById('evaluationReportContainer').innerHTML = 
+                '<div class="alert alert-danger">Error loading report: ' + error.message + '</div>';
+        }
+    }
+    
+    function renderEvaluationReport(report) {
+        const container = document.getElementById('evaluationReportContainer');
+        let html = '';
+        
+        // Header with metadata
+        html += `
+            <div class="card mb-3">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="mb-0">
+                        <i class="bi bi-file-earmark-text"></i> Trust Evaluation Report
+                    </h5>
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-3">
+                            <small class="text-muted">Report Generated</small>
+                            <p class="mb-0"><strong>${new Date(report.timestamp).toLocaleString()}</strong></p>
+                        </div>
+                        <div class="col-md-3">
+                            <small class="text-muted">Evaluation Mode</small>
+                            <p class="mb-0">
+                                <span class="badge ${report.evaluation_mode === 'batch' ? 'bg-success' : 'bg-info'}">
+                                    ${report.evaluation_mode || 'batch'}
+                                </span>
+                            </p>
+                        </div>
+                        <div class="col-md-3">
+                            <small class="text-muted">Submissions Analyzed</small>
+                            <p class="mb-0"><strong>${report.cycle_submissions_count || 1}</strong></p>
+                        </div>
+                        <div class="col-md-3">
+                            <small class="text-muted">System Behaviour</small>
+                            <p class="mb-0">
+                                <span class="badge ${getBehaviourBadgeClass(report.system_behaviour)}">
+                                    ${report.system_behaviour}
+                                </span>
+                            </p>
+                        </div>
+                    </div>
+                    <div class="mt-3">
+                        <div class="progress" style="height: 25px;">
+                            <div class="progress-bar" role="progressbar" 
+                                style="width: ${report.system_trust_score_percentage}%; background-color: ${getTrustScoreColor(report.system_trust_score_percentage)};"
+                                aria-valuenow="${report.system_trust_score_percentage}" aria-valuemin="0" aria-valuemax="100">
+                                <small style="color: white; font-weight: bold;">System Trust Score: ${report.system_trust_score_percentage.toFixed(2)}%</small>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="mt-3">
+                        <button class="btn btn-info btn-sm" onclick="loadAndShowAnalysisDetails('${report._id}')">
+                            <i class="bi bi-graph-up"></i> View Detailed Analysis
+                        </button>
+                    </div>
+                </div>
+            </div>
+        `;
+        
+        // Analysis Details Section (will be loaded dynamically)
+        html += `<div id="analysisDetailsSection-${report._id}" class="d-none mt-4"></div>`;
+        
+        // Categories section
+        const trustReport = report.report || {};
+        const categories = trustReport.trust_evaluation_report || [];
+       
+        //removing unwanted file.
+        // html += `<h5 class="mt-4 mb-3"><i class="bi bi-diagram-2"></i> £Categories Analysis</h5>`;
+        
+        // if (categories.length === 0) {
+        //     html += '<div class="alert alert-info">No categories evaluated in this report.</div>';
+        // } else {
+        //     categories.forEach((category, idx) => {
+        //         html += renderCategoryCard(category, idx);
+        //     });
+        // }
+        
+        // Overrides section
+        const overrides = trustReport.behaviour_classification_overrides || [];
+        if (overrides.length > 0) {
+            html += `
+                <h5 class="mt-4 mb-3"><i class="bi bi-exclamation-triangle"></i> Behaviour Classification Overrides</h5>
+                <div class="alert alert-warning">
+                    <p class="mb-0"><strong>${overrides.length} override(s) applied during this evaluation</strong></p>
+                </div>
+            `;
+            
+            overrides.forEach((override, idx) => {
+                html += `
+                    <div class="card mb-2">
+                        <div class="card-body">
+                            <div class="row">
+                                <div class="col-md-3">
+                                    <small class="text-muted">Category</small>
+                                    <p class="mb-0"><strong>${override.category_name}</strong></p>
+                                </div>
+                                <div class="col-md-2">
+                                    <small class="text-muted">Original</small>
+                                    <p class="mb-0"><span class="badge bg-light text-dark">${override.original_behaviour_classification}</span></p>
+                                </div>
+                                <div class="col-md-2">
+                                    <small class="text-muted">Overridden To</small>
+                                    <p class="mb-0"><span class="badge ${getBehaviourBadgeClass(override.overridden_behaviour_classification)}">${override.overridden_behaviour_classification}</span></p>
+                                </div>
+                                <div class="col-md-5">
+                                    <small class="text-muted">Reason</small>
+                                    <p class="mb-0"><small>${override.override_reason}</small></p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            });
+        }
+        
+        container.innerHTML = html;
+    }
+    
+    function renderCategoryCard(category, index) {
+        let html = `
+            <div class="card mb-3">
+                <div class="card-header">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div>
+                            <h6 class="mb-0">${category.category_name}</h6>
+                            <small class="text-muted">${category.numer_of_tools_reporting} of ${category.number_of_tools_registered} tools reporting</small>
+                        </div>
+                        <button class="btn btn-sm btn-outline-secondary" type="button" 
+                            onclick="toggleCategoryDetails('category-${index}')"
+                            id="btn-category-${index}">
+                            <i class="bi bi-chevron-down"></i> Show Details
+                        </button>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-3">
+                            <small class="text-muted">Behaviour</small>
+                            <p class="mb-0">
+                                <span class="badge ${getBehaviourBadgeClass(category.category_final_behaviour)}">
+                                    ${category.category_final_behaviour}
+                                </span>
+                            </p>
+                        </div>
+                        <div class="col-md-3">
+                            <small class="text-muted">Trust Score</small>
+                            <p class="mb-0">${category.category_trust_score}/${category.category_max_trust_score}</p>
+                        </div>
+                        <div class="col-md-6">
+                            <small class="text-muted">Trust Score Percentage</small>
+                            <div class="progress" style="height: 20px;">
+                                <div class="progress-bar" role="progressbar" 
+                                    style="width: ${category.category_trust_score_percentage}%; background-color: ${getTrustScoreColor(category.category_trust_score_percentage)};"
+                                    aria-valuenow="${category.category_trust_score_percentage}" aria-valuemin="0" aria-valuemax="100">
+                                    <small style="color: white; font-size: 0.75rem;">${category.category_trust_score_percentage.toFixed(2)}%</small>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Collapsible Details -->
+                    <div id="category-${index}" class="d-none mt-3">
+                        <hr>
+                        <h6 class="mt-3 mb-2"><i class="bi bi-tools"></i> Reporting Tools</h6>
+                        ${renderToolsList(category.reporting_tools, category.category_name)}
+                        
+                        ${category.previous_tool_reports && category.previous_tool_reports.length > 0 
+                            ? `<h6 class="mt-3 mb-2"><i class="bi bi-clock-history"></i> Previous Reports (Not Reporting)</h6>
+                               ${renderToolsList(category.previous_tool_reports, category.category_name)}`
+                            : ''
+                        }
+                    </div>
+                </div>
+            </div>
+        `;
+        
+        return html;
+    }
+    
+    function renderToolsList(tools, categoryName) {
+        if (!tools || tools.length === 0) {
+            return '<p class="text-muted"><small>No tools in this category</small></p>';
+        }
+        
+        let html = '<div class="list-group">';
+        
+        tools.forEach((tool, idx) => {
+            const impactCount = tool.activated_impacts ? tool.activated_impacts.length : 0;
+            html += `
+                <div class="list-group-item">
+                    <div class="d-flex justify-content-between align-items-start mb-2">
+                        <div>
+                            <h6 class="mb-1">${tool.tool_name}</h6>
+                            <small class="text-muted">${tool.tool_reports_submitted} reports submitted</small>
+                        </div>
+                        <div>
+                            <span class="badge ${getBehaviourBadgeClass(tool.tool_final_behaviour)}">${tool.tool_final_behaviour}</span>
+                            <span class="badge bg-secondary ms-1">${tool.final_impact}</span>
+                        </div>
+                    </div>
+                    
+                    ${impactCount > 0 ? `
+                        <div class="mb-2 border-top pt-2">
+                            <button class="btn btn-sm btn-outline-info w-100" 
+                                onclick="toggleToolDetails('tool-${categoryName}-${idx}', 'btn-tool-${categoryName}-${idx}')"
+                                id="btn-tool-${categoryName}-${idx}">
+                                <i class="bi bi-chevron-down"></i> 
+                                <span>${impactCount} supplementary detail(s) - Click to view</span>
+                            </button>
+                            <div id="tool-${categoryName}-${idx}" class="d-none mt-3 p-3 bg-light rounded">
+                                <small class="text-muted d-block mb-2"><strong>📋 Triggered Rules & Impacts:</strong></small>
+                                ${tool.activated_impacts.map(impact => `
+                                    <div class="ps-3 pb-3 border-bottom" style="margin-bottom: 10px;">
+                                        <div class="d-flex gap-2 align-items-start">
+                                            <span class="badge bg-info flex-shrink-0">${impact.impact}</span>
+                                            <div style="flex: 1;">
+                                                <code style="color: #d63384; font-size: 0.85rem;">${impact.rule}</code>
+                                                <br><small class="text-muted">⏰ ${new Date(impact.tool_report_timestamp).toLocaleString()}</small>
+                                            </div>
+                                        </div>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        </div>
+                    ` : ''}
+                </div>
+            `;
+        });
+        
+        html += '</div>';
+        return html;
+    }
+    
+    function toggleCategoryDetails(elementId) {
+        const element = document.getElementById(elementId);
+        const button = document.getElementById('btn-' + elementId);
+        
+        if (element.classList.contains('d-none')) {
+            element.classList.remove('d-none');
+            button.innerHTML = '<i class="bi bi-chevron-up"></i> Hide Details';
+        } else {
+            element.classList.add('d-none');
+            button.innerHTML = '<i class="bi bi-chevron-down"></i> Show Details';
+        }
+    }
+    
+    function toggleToolDetails(elementId, buttonId) {
+        const element = document.getElementById(elementId);
+        const button = document.getElementById(buttonId);
+        
+        if (element.classList.contains('d-none')) {
+            element.classList.remove('d-none');
+            if (button) {
+                const icon = button.querySelector('i');
+                if (icon) icon.className = 'bi bi-chevron-up';
+                const span = button.querySelector('span');
+                if (span) span.textContent = element.textContent.includes('detail') 
+                    ? span.textContent.replace('Click to view', 'Click to hide') 
+                    : span.textContent;
+            }
+        } else {
+            element.classList.add('d-none');
+            if (button) {
+                const icon = button.querySelector('i');
+                if (icon) icon.className = 'bi bi-chevron-down';
+                const span = button.querySelector('span');
+                if (span) span.textContent = element.textContent.includes('detail') 
+                    ? span.textContent.replace('Click to hide', 'Click to view') 
+                    : span.textContent;
+            }
+        }
+    }
+    
+    function getBehaviourBadgeClass(behaviour) {
+        switch(behaviour) {
+            case 'normal': return 'bg-success';
+            case 'suspicious': return 'bg-warning';
+            case 'compromised': return 'bg-danger';
+            default: return 'bg-secondary';
+        }
+    }
+    
+    function getTrustScoreColor(percentage) {
+        if (percentage >= 75) return '#198754'; // green
+        if (percentage >= 50) return '#ffc107'; // yellow
+        return '#dc3545'; // red
+    }
+    
+    async function showEvaluationReportHistory() {
+        try {
+            const response = await fetch('/trust-evaluation-reports?limit=20');
+            const data = await response.json();
+            const reports = data.reports || [];
+            
+            if (reports.length === 0) {
+                alert('No evaluation reports found.');
+                return;
+            }
+            
+            let historyHtml = '<div class="list-group">';
+            
+            reports.forEach((report, idx) => {
+                const timestamp = new Date(report.timestamp).toLocaleString();
+                const mode = report.evaluation_mode || 'batch';
+                const score = report.system_trust_score_percentage.toFixed(2);
+                const behaviour = report.system_behaviour;
+                
+                historyHtml += `
+                    <button type="button" class="list-group-item list-group-item-action" 
+                        onclick="loadReportById('${report._id}')">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <div>
+                                <h6 class="mb-1">${timestamp}</h6>
+                                <small class="text-muted">${mode} • ${report.cycle_submissions_count} submissions</small>
+                            </div>
+                            <div>
+                                <span class="badge ${getBehaviourBadgeClass(behaviour)}">${behaviour}</span>
+                                <span class="badge" style="background-color: ${getTrustScoreColor(score)}">${score}%</span>
+                            </div>
+                        </div>
+                    </button>
+                `;
+            });
+            
+            historyHtml += '</div>';
+            
+            // Create and show modal
+            const modal = new bootstrap.Modal(document.getElementById('trustHistoryModal'));
+            document.getElementById('trustHistoryModal').querySelector('.modal-header h5').textContent = 'Evaluation Report History';
+            document.getElementById('trustHistoryModal').querySelector('.modal-body').innerHTML = historyHtml;
+            modal.show();
+        } catch (error) {
+            alert('Error loading report history: ' + error.message);
+        }
+    }
+    
+    async function loadReportById(reportId) {
+        try {
+            const response = await fetch(`/trust-evaluation-reports/${reportId}`);
+            if (!response.ok) {
+                alert('Error loading report');
+                return;
+            }
+            
+            const data = await response.json();
+            const report = data.report;
+            
+            // Close history modal and show report
+            bootstrap.Modal.getInstance(document.getElementById('trustHistoryModal')).hide();
+            
+            setTimeout(() => {
+                renderEvaluationReport(report);
+            }, 500);
+        } catch (error) {
+            alert('Error loading report: ' + error.message);
+        }
+    }
+    
+    // ==================== Analysis Details Functions ====================
+    
+    async function loadAndShowAnalysisDetails(reportId) {
+        try {
+            const section = document.getElementById(`analysisDetailsSection-${reportId}`);
+            
+            // Show loading
+            section.classList.remove('d-none');
+            section.innerHTML = '<div class="spinner-border" role="status"><span class="visually-hidden">Loading...</span></div>';
+            
+            // Fetch analysis data
+            const response = await fetch(`/api/analysis-report/${reportId}`);
+            if (!response.ok) {
+                section.innerHTML = '<div class="alert alert-danger">Error loading analysis details</div>';
+                return;
+            }
+            
+            const data = await response.json();
+            
+            // Render analysis details
+            let html = `
+                <div class="card">
+                    <div class="card-header bg-info text-white">
+                        <h5 class="mb-0"><i class="bi bi-graph-up"></i> Detailed Analysis Breakdown</h5>
+                    </div>
+                    <div class="card-body">
+                        <ul class="nav nav-tabs" role="tablist" id="analysisTabs">
+                            <li class="nav-item" role="presentation">
+                                <button class="nav-link active" id="toolReportings-tab" data-bs-toggle="tab" data-bs-target="#toolReportings"
+                                    type="button" role="tab">Tool Submissions (${data.tool_reportings.length})</button>
+                            </li>
+                            <li class="nav-item" role="presentation">
+                                <button class="nav-link" id="behaviorSteps-tab" data-bs-toggle="tab" data-bs-target="#behaviorSteps"
+                                    type="button" role="tab">Behavior Steps (${data.behavior_determination_logs.length})</button>
+                            </li>
+                            <li class="nav-item" role="presentation">
+                                <button class="nav-link" id="scoreSteps-tab" data-bs-toggle="tab" data-bs-target="#scoreSteps"
+                                    type="button" role="tab">Score Calculation (${data.trust_score_calculation_logs.length})</button>
+                            </li>
+                            <li class="nav-item" role="presentation">
+                                <button class="nav-link" id="ruleEvals-tab" data-bs-toggle="tab" data-bs-target="#ruleEvals"
+                                    type="button" role="tab">Rule Evaluations (${data.rule_evaluation_logs.length})</button>
+                            </li>
+                        </ul>
+                        
+                        <div class="tab-content mt-3" id="analysisTabContent">
+                            <!-- Tool Reportings Tab -->
+                            <div class="tab-pane fade show active" id="toolReportings" role="tabpanel">
+                                ${renderToolReportings(data.tool_reportings)}
+                            </div>
+                            
+                            <!-- Behavior Steps Tab -->
+                            <div class="tab-pane fade" id="behaviorSteps" role="tabpanel">
+                                ${renderBehaviorSteps(data.behavior_determination_logs)}
+                            </div>
+                            
+                            <!-- Score Steps Tab -->
+                            <div class="tab-pane fade" id="scoreSteps" role="tabpanel">
+                                ${renderScoreSteps(data.trust_score_calculation_logs)}
+                            </div>
+                            
+                            <!-- Rule Evaluations Tab -->
+                            <div class="tab-pane fade" id="ruleEvals" role="tabpanel">
+                                ${renderRuleEvaluations(data.rule_evaluation_logs)}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+            
+            section.innerHTML = html;
+        } catch (error) {
+            console.error('Error:', error);
+            section.innerHTML = `<div class="alert alert-danger">Error: ${error.message}</div>`;
+        }
+    }
+    
+    function renderToolReportings(reportings) {
+        if (!reportings || reportings.length === 0) {
+            return '<p class="text-muted">No tool submissions found</p>';
+        }
+        
+        let html = '<div class="table-responsive"><table class="table table-sm">';
+        html += '<thead><tr><th>Tool Name</th><th>Unique ID</th><th>Value</th><th>Category</th><th>Impact</th><th>Time</th></tr></thead><tbody>';
+        
+        reportings.forEach(rep => {
+            const time = new Date(rep.timestamp).toLocaleTimeString();
+            html += `
+                <tr>
+                    <td><strong>${rep.tool_name}</strong></td>
+                    <td><code>${rep.unique_id}</code></td>
+                    <td>${JSON.stringify(rep.value)}</td>
+                    <td>${rep.category}</td>
+                    <td><span class="badge bg-${rep.impact === 'High' ? 'danger' : rep.impact === 'Mid' ? 'warning' : 'success'}">${rep.impact}</span></td>
+                    <td><small>${time}</small></td>
+                </tr>
+            `;
+        });
+        
+        html += '</tbody></table></div>';
+        return html;
+    }
+    
+    function renderBehaviorSteps(logs) {
+        if (!logs || logs.length === 0) {
+            return '<p class="text-muted">No behavior determination logs found</p>';
+        }
+        
+        let html = '';
+        logs.forEach((log, idx) => {
+            let advancedRulesHtml = '';
+            if (log.advanced_rules && log.advanced_rules.evaluated) {
+                const rulesColor = log.advanced_rules.overall_result ? 'bg-success' : 'bg-secondary';
+                advancedRulesHtml = `
+                    <div style="margin-top: 10px; padding: 8px; background: #f0f0f0; border-radius: 4px;">
+                        <small><strong>Advanced Rules:</strong> ${log.advanced_rules.overall_result ? '✓ Matched' : '✗ Not Matched'} 
+                        (${log.advanced_rules.matched_count}/${log.advanced_rules.total_rules} rules matched)
+                        <span class="badge ${rulesColor}" style="margin-left: 5px;">${log.advanced_rules.overall_result ? 'Active' : 'Inactive'}</span>
+                        </small>
+                    </div>
+                `;
+            }
+            
+            html += `
+                <div class="card mb-3">
+                    <div class="card-header cursor-pointer" onclick="toggleCollapse('behaviorLog${idx}')">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <h6 class="mb-0">${log.tool_name} → ${log.category}</h6>
+                            <span class="badge ${log.final_behaviour === 'normal' ? 'bg-success' : log.final_behaviour === 'suspicious' ? 'bg-warning' : 'bg-danger'}">${log.final_behaviour}</span>
+                        </div>
+                    </div>
+                    <div class="card-body d-none" id="behaviorLog${idx}">
+                        ${advancedRulesHtml}
+                        ${renderSteps(log.steps)}
+                    </div>
+                </div>
+            `;
+        });
+        
+        return html;
+    }
+    
+    function renderScoreSteps(logs) {
+        if (!logs || logs.length === 0) {
+            return '<p class="text-muted">No score calculation logs found</p>';
+        }
+        
+        let html = '';
+        logs.forEach((log, idx) => {
+            html += `
+                <div class="card mb-3">
+                    <div class="card-header cursor-pointer" onclick="toggleCollapse('scoreLog${idx}')">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <h6 class="mb-0">${log.tool_name} → ${log.category}</h6>
+                            <div>
+                                <span class="badge bg-primary">${log.final_score.toFixed(2)}/${log.final_max_score.toFixed(2)}</span>
+                                <span class="badge" style="background-color: ${getTrustScoreColor(log.final_percentage)}">${log.final_percentage.toFixed(2)}%</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="card-body d-none" id="scoreLog${idx}">
+                        <div class="progress mb-3" style="height: 25px;">
+                            <div class="progress-bar" style="width: ${log.final_percentage}%; background-color: ${getTrustScoreColor(log.final_percentage)}">
+                                <small style="color: white; font-weight: bold;">${log.final_percentage.toFixed(2)}%</small>
+                            </div>
+                        </div>
+                        ${renderSteps(log.steps)}
+                    </div>
+                </div>
+            `;
+        });
+        
+        return html;
+    }
+    
+    function renderSteps(steps) {
+        if (!steps || steps.length === 0) {
+            return '<p class="text-muted">No steps recorded</p>';
+        }
+        
+        let html = '';
+        steps.forEach((step, idx) => {
+            html += `
+                <div style="margin: 15px 0; padding: 10px; background: #f8f9fa; border-left: 3px solid #0d6efd; border-radius: 4px;">
+                    <h6 class="mb-2">
+                        <strong>Step ${step.step}: ${step.name}</strong>
+                    </h6>
+                    <p class="mb-2 text-muted"><small>${step.description || ''}</small></p>
+                    ${step.formula ? `<p class="mb-2"><code style="background: #f5f5f5; padding: 5px;">${step.formula}</code></p>` : ''}
+                    ${step.logic ? `<p class="mb-2"><small><strong>Logic:</strong> ${step.logic}</small></p>` : ''}
+                    ${step.input ? `<p class="mb-2"><small><strong>Input:</strong> ${JSON.stringify(step.input)}</small></p>` : ''}
+                    <p style="color: #198754; font-weight: bold; margin-bottom: 0;">→ Result: ${JSON.stringify(step.result)}</p>
+                </div>
+            `;
+        });
+        
+        return html;
+    }
+    
+    function renderRuleEvaluations(logs) {
+        if (!logs || logs.length === 0) {
+            return '<p class="text-muted">No advanced rules were evaluated</p>';
+        }
+        
+        let html = '';
+        logs.forEach((log, idx) => {
+            const summary = log.summary || {};
+            const matched = summary.rules_matched || 0;
+            const total = summary.total_rules || 0;
+            
+            html += `
+                <div class="card mb-3">
+                    <div class="card-header cursor-pointer" onclick="toggleCollapse('ruleLog${idx}')">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <h6 class="mb-0">${log.tool_name} → ${log.category}</h6>
+                            <span class="badge ${matched === total ? 'bg-danger' : 'bg-warning'}">${matched}/${total} matched</span>
+                        </div>
+                    </div>
+                    <div class="card-body d-none" id="ruleLog${idx}">
+                        ${log.rules_evaluated && log.rules_evaluated.length > 0 
+                            ? log.rules_evaluated.map(rule => `
+                                <div style="margin: 10px 0; padding: 12px; background: ${rule.matched ? '#d4edda' : '#f8d7da'}; border-radius: 4px; border-left: 4px solid ${rule.matched ? '#28a745' : '#dc3545'}">
+                                    <div class="d-flex justify-content-between align-items-center mb-3">
+                                        <strong style="font-size: 1.05em;">${rule.rule_name || 'Rule'}</strong>
+                                        <span class="badge ${rule.matched ? 'bg-success' : 'bg-danger'}">${rule.matched ? '✓ Matched' : '✗ Not Matched'}</span>
+                                    </div>
+                                    
+                                    ${rule.impact_level ? `
+                                        <div style="margin: 8px 0;">
+                                            <small><strong>Impact Level:</strong> <span style="color: #666;">${rule.impact_level}</span></small>
+                                        </div>
+                                    ` : ''}
+                                    
+                                    ${rule.matched_groups && rule.matched_groups.length > 0 ? `
+                                        <div style="margin: 8px 0; padding: 8px; background: rgba(255,255,255,0.6); border-radius: 3px;">
+                                            <small><strong>Matched Conditions:</strong></small>
+                                            <ul style="margin: 5px 0 0 20px; padding: 0;">
+                                                ${rule.matched_groups.map(group => `
+                                                    <li style="margin: 3px 0;">
+                                                        <small>
+                                                            <strong>Field:</strong> ${group.field_path || 'N/A'}<br>
+                                                            <strong>Operator:</strong> ${group.operator || 'N/A'}<br>
+                                                            <strong>Expected:</strong> <code style="background: #f0f0f0; padding: 2px 4px;">${group.expected_value !== undefined ? JSON.stringify(group.expected_value) : 'N/A'}</code><br>
+                                                            <strong>Actual:</strong> <code style="background: #f0f0f0; padding: 2px 4px;">${group.actual_value !== undefined ? JSON.stringify(group.actual_value) : 'N/A'}</code>
+                                                        </small>
+                                                    </li>
+                                                `).join('')}
+                                            </ul>
+                                        </div>
+                                    ` : ''}
+                                    
+                                    ${rule.extracted_values && Object.keys(rule.extracted_values).length > 0 ? `
+                                        <div style="margin: 8px 0; padding: 8px; background: rgba(255,255,255,0.6); border-radius: 3px;">
+                                            <small><strong>Extracted Values:</strong></small>
+                                            <ul style="margin: 5px 0 0 20px; padding: 0;">
+                                                ${Object.entries(rule.extracted_values).map(([key, value]) => `
+                                                    <li style="margin: 3px 0;">
+                                                        <small><strong>${key}:</strong> <code style="background: #f0f0f0; padding: 2px 4px;">${typeof value === 'object' ? JSON.stringify(value) : value}</code></small>
+                                                    </li>
+                                                `).join('')}
+                                            </ul>
+                                        </div>
+                                    ` : ''}
+                                </div>
+                            `).join('')
+                            : '<p class="text-muted">No rules evaluated</p>'
+                        }
+                    </div>
+                </div>
+            `;
+        });
+        
+        return html;
+    }
+    
+    function toggleCollapse(elementId) {
+        const el = document.getElementById(elementId);
+        if (el) {
+            el.classList.toggle('d-none');
+        }
+    }
+    
+    // Load report when tab is shown
+    document.getElementById('evaluation-reports-tab').addEventListener('shown.bs.tab', function() {
+        loadLatestEvaluationReport();
+    });
     </script>
 </body>
 

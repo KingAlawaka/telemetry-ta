@@ -1,6 +1,6 @@
 from annotated_types import doc
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List, Dict, Any, Union
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -16,6 +16,8 @@ from contextlib import asynccontextmanager
 from fastapi import Body
 from bson import ObjectId
 import os, sys
+from fastapi.middleware.cors import CORSMiddleware
+
 sys.path.append(os.path.dirname(__file__))
 
 
@@ -61,10 +63,495 @@ def process_value(value, processing_steps):
     
     return current_value
 
+# ==================== ADVANCED RULES ENGINE ====================
+
+def get_field_value(payload, json_path):
+    """
+    Extract value from payload using JSON path (e.g., 'user.profile.role' or 'payload.data.severity')
+    If path starts with 'payload.', strips that prefix since payload is already the object.
+    Returns the value at the path, or None if path doesn't exist.
+    """
+    if not json_path or not payload:
+        print(f"[get_field_value] Early return: json_path={json_path}, payload exists={payload is not None}")
+        return None
+    
+    # Strip 'payload.' prefix if present (for compatibility with mapped request paths)
+    if json_path.startswith('payload.'):
+        json_path = json_path[8:]  # Remove 'payload.' (8 characters)
+        print(f"[get_field_value] Stripped 'payload.' prefix, using path: {json_path}")
+    
+    keys = json_path.split('.')
+    value = payload
+    print(f"[get_field_value] Starting extraction from path: {json_path}")
+    print(f"[get_field_value] Payload keys: {list(payload.keys()) if isinstance(payload, dict) else 'not a dict'}")
+    
+    for i, key in enumerate(keys):
+        print(f"[get_field_value] Step {i}: Looking for key '{key}' in type {type(value).__name__}")
+        
+        if isinstance(value, dict):
+            if key in value:
+                value = value.get(key)
+                print(f"[get_field_value]   → Found '{key}', value={value}, type={type(value).__name__}")
+            else:
+                print(f"[get_field_value]   → Key '{key}' NOT FOUND in dict. Available keys: {list(value.keys())}")
+                return None
+        elif isinstance(value, list):
+            try:
+                idx = int(key)
+                if 0 <= idx < len(value):
+                    value = value[idx]
+                    print(f"[get_field_value]   → Found index {idx}, value={value}")
+                else:
+                    print(f"[get_field_value]   → Index {idx} out of range (list length={len(value)})")
+                    return None
+            except (ValueError, IndexError) as e:
+                print(f"[get_field_value]   → Error accessing list with key '{key}': {e}")
+                return None
+        else:
+            print(f"[get_field_value]   → Cannot traverse {type(value).__name__} with key '{key}'")
+            return None
+        
+        if value is None:
+            print(f"[get_field_value]   → Value became None at step {i}")
+            return None
+    
+    print(f"[get_field_value] Final result: {value}")
+    return value
+
+def compare_values(actual, operator, expected, data_type):
+    """
+    Compare two values using the specified operator.
+    
+    Args:
+        actual: The actual value from payload
+        operator: The comparison operator
+        expected: The expected value
+        data_type: The data type ("string", "number", "boolean", "array")
+    
+    Returns:
+        Boolean result of comparison
+    """
+    try:
+        print(f"Comparing values: actual={actual} (type {data_type}), operator={operator}, expected={expected}")
+        # String operators
+        if operator == "equals":
+            return actual == expected
+        elif operator == "not_equals":
+            return actual != expected
+        elif operator == "contains":
+            return str(expected) in str(actual)
+        elif operator == "not_contains":
+            return str(expected) not in str(actual)
+        elif operator == "starts_with":
+            return str(actual).startswith(str(expected))
+        elif operator == "ends_with":
+            return str(actual).endswith(str(expected))
+        elif operator == "in_list":
+            if isinstance(expected, list):
+                return actual in expected
+            return False
+        elif operator == "not_in_list":
+            if isinstance(expected, list):
+                return actual not in expected
+            return False
+        elif operator == "matches_regex":
+            import re
+            try:
+                return bool(re.search(str(expected), str(actual)))
+            except:
+                return False
+        
+        # Numeric operators
+        elif operator == "gt":
+            return float(actual) > float(expected)
+        elif operator == "gte":
+            return float(actual) >= float(expected)
+        elif operator == "lt":
+            return float(actual) < float(expected)
+        elif operator == "lte":
+            return float(actual) <= float(expected)
+        elif operator == "between":
+            if isinstance(expected, list) and len(expected) >= 2:
+                return float(expected[0]) <= float(actual) <= float(expected[1])
+            return False
+        elif operator == "not_between":
+            if isinstance(expected, list) and len(expected) >= 2:
+                return not (float(expected[0]) <= float(actual) <= float(expected[1]))
+            return False
+        
+        # Boolean operators
+        elif operator == "is_true":
+            return bool(actual)
+        elif operator == "is_false":
+            return not bool(actual)
+        
+        else:
+            return False
+    
+    except (ValueError, TypeError):
+        return False
+
+def evaluate_condition(payload, condition):
+    """
+    Evaluate a single condition against payload.
+    
+    Returns:
+        Tuple of (result: bool, extracted_value: any)
+    """
+    try:
+        print("eval condition", condition)
+        # Extract field value - handle both formats:
+        # Format 1: condition['field'] is a string (JSON path)
+        # Format 2: condition['field'] is dict with 'json_path' key
+        field_path = condition.get('field')
+        field_data_type = 'string'
+        if isinstance(field_path, dict):
+            field_data_type = field_path.get('data_type', 'string')
+            field_path = field_path.get('json_path')
+
+        print(f"Extracting field value from path: {field_path} with data type: {field_data_type}")
+        field_value = get_field_value(payload, field_path)
+        print(f"Field value extracted: {field_value} (type {field_data_type})")
+        
+        
+        if field_value is None:
+            return False, None
+        
+        # Compare using operator
+        result = compare_values(
+            field_value,
+            condition['operator'],
+            condition.get('expected_value'),
+            field_data_type
+        )
+        
+        return result, field_value
+    
+    except Exception as e:
+        print(f"Error evaluating condition: {e}")
+        return False, None
+
+def evaluate_condition_group(payload, group):
+    """
+    Evaluate a condition group (multiple conditions with AND/OR logic).
+    
+    Returns:
+        Tuple of (result: bool, extracted_values: dict)
+    """
+    try:
+        results = []
+        extracted = {}
+        print("eval condition group", group)
+        for condition in group['conditions']:
+            result, value = evaluate_condition(payload, condition)
+            results.append(result)
+            if value is not None:
+                # Handle both formats for field
+                field_path = condition.get('field')
+                if isinstance(field_path, dict):
+                    field_path = field_path.get('json_path', str(field_path))
+                extracted[field_path] = value
+        
+        connector = group.get('connector', 'AND').upper()
+        
+        if connector == "AND":
+            final_result = all(results) if results else False
+        else:  # OR
+            final_result = any(results) if results else False
+        
+        return final_result, extracted
+    
+    except Exception as e:
+        print(f"Error evaluating condition group: {e}")
+        return False, {}
+
+def evaluate_rule(payload, rule):
+    """
+    Evaluate a complete rule against payload.
+    
+    NEW STRUCTURE:
+    - primary_field_path: Path to primary value field (REQUIRED TO MATCH)
+    - primary_value: The primary value to verify
+    - secondary_conditions: List of conditions to evaluate against secondary fields
+    - within_rule_connector: AND/OR to combine secondary conditions AFTER primary matches (default: AND)
+    - impact_level: Impact level when rule matches
+    
+    Logic:
+    1. Primary field must match (required)
+    2. If no secondary conditions: rule matches if primary matches
+    3. If secondary conditions exist: combine them with within_rule_connector
+    4. Final result: primary_matches AND (secondary_conditions combined with connector)
+    
+    Returns:
+        Dictionary with matched status, matched groups, and extracted values
+    """
+    try:
+        print(f"Evaluating rule: {rule.get('name', 'Unknown')}")
+        
+        # Get primary field value from payload
+        primary_field_path = rule.get('primary_field_path')
+        primary_value = rule.get('primary_value')
+        
+        if not primary_field_path or primary_value is None:
+            print(f"Rule missing primary_field_path or primary_value")
+            return {
+                "matched": False,
+                "matched_groups": [],
+                "extracted_values": {},
+                "impact_level": None
+            }
+        
+        # Extract primary field value from payload
+        primary_field_actual = get_field_value(payload, primary_field_path)
+        print(f"Primary field {primary_field_path}: expected='{primary_value}', actual='{primary_field_actual}'")
+        
+        # Check if primary value matches
+        primary_matches = str(primary_field_actual) == str(primary_value)
+        print(f"Primary field matches: {primary_matches}")
+        
+        all_extracted = {primary_field_path: primary_field_actual}
+        matched_groups = []
+        
+        # If primary doesn't match, rule fails immediately
+        if not primary_matches:
+            print(f"Rule '{rule.get('name')}' result: False (primary field didn't match)")
+            return {
+                "matched": False,
+                "matched_groups": [],
+                "extracted_values": all_extracted,
+                "impact_level": None
+            }
+        
+        # Add primary group to matched groups
+        matched_groups.append({
+            "field_path": primary_field_path,
+            "operator": "equals",
+            "expected_value": primary_value,
+            "actual_value": primary_field_actual
+        })
+        
+        # Evaluate secondary conditions
+        secondary_conditions = rule.get('secondary_conditions', [])
+        
+        # If no secondary conditions, rule matches (primary is sufficient)
+        if not secondary_conditions:
+            print(f"Rule has no secondary conditions - primary match is sufficient")
+            print(f"Rule '{rule.get('name')}' result: True")
+            return {
+                "matched": True,
+                "matched_groups": matched_groups,
+                "extracted_values": all_extracted,
+                "impact_level": rule.get('impact_level', 'medium')
+            }
+        
+        # Evaluate secondary conditions
+        condition_results = []
+        secondary_matched_groups = []
+        
+        for condition in secondary_conditions:
+            secondary_field_path = condition.get('secondary_field')
+            operator = condition.get('operator')
+            expected_value = condition.get('secondary_value')
+            
+            # Get secondary field value from payload
+            secondary_value = get_field_value(payload, secondary_field_path)
+            print(f"Evaluating: {secondary_field_path} {operator} {expected_value} (actual: {secondary_value})")
+            
+            # Compare values using operator
+            result = compare_values(secondary_value, operator, expected_value, None)
+            condition_results.append(result)
+            all_extracted[secondary_field_path] = secondary_value
+            
+            # Add to matched groups if condition matched
+            if result:
+                secondary_matched_groups.append({
+                    "field_path": secondary_field_path,
+                    "operator": operator,
+                    "expected_value": expected_value,
+                    "actual_value": secondary_value
+                })
+        
+        # Combine secondary conditions using within_rule_connector
+        within_rule_connector = rule.get('within_rule_connector', 'AND').upper()
+        print(f"Within-rule connector (for secondary conditions): {within_rule_connector}")
+        
+        # Combine secondary conditions
+        if within_rule_connector == "AND":
+            secondary_result = all(condition_results) if condition_results else False
+            print(f"AND logic: all secondary conditions must match. Result: {secondary_result}")
+        else:  # OR
+            secondary_result = any(condition_results) if condition_results else False
+            print(f"OR logic: at least one secondary condition must match. Result: {secondary_result}")
+        
+        # Final result: primary AND secondary_result
+        final_result = primary_matches and secondary_result
+        print(f"Rule '{rule.get('name')}' result: {final_result} (primary={primary_matches} AND secondary={secondary_result})")
+        
+        # Only include secondary matched groups if secondary result is True
+        if secondary_result:
+            matched_groups.extend(secondary_matched_groups)
+        
+        return {
+            "matched": final_result,
+            "matched_groups": matched_groups if final_result else [],
+            "extracted_values": all_extracted,
+            "impact_level": rule.get('impact_level', 'medium') if final_result else None
+        }
+    
+    except Exception as e:
+        print(f"Error evaluating rule: {e}")
+        import traceback
+        traceback.print_exc()
+        return {
+            "matched": False,
+            "matched_groups": [],
+            "extracted_values": {},
+            "impact_level": None
+        }
+
+def evaluate_all_rules(payload, rules, between_rules_connector="AND"):
+    """
+    Evaluate all rules against a payload with hierarchical connector logic.
+    
+    Two-level connector architecture:
+    1. WITHIN-RULE: Primary field + secondary conditions combined with 'within_rule_connector'
+    2. BETWEEN-RULE: Multiple rule outcomes combined with 'between_rules_connector'
+    
+    Args:
+        payload: The payload to evaluate
+        rules: List of rule dictionaries
+        between_rules_connector: "AND" or "OR" - how to combine multiple rule outcomes
+    
+    Returns:
+        Dictionary with evaluation results including impact level
+    """
+    try:
+        print(f"\n--- EVALUATING {len(rules or [])} RULES ---")
+        print(f"Between-rules connector: {between_rules_connector}")
+        
+        if not rules:
+            return {
+                "overall_result": False,
+                "matched_rules": [],
+                "rule_count": 0,
+                "matched_count": 0,
+                "evaluations": [],
+                "impact_level": None
+            }
+        
+        rule_results = []
+        matched_rules = []
+        all_matched_details = []
+        impact_levels = []
+        
+        # Step 1: Evaluate each rule individually (WITHIN-RULE evaluation)
+        for i, rule in enumerate(rules or []):
+            rule_name = rule.get('name', f'Rule {i}')
+            print(f"\n--- Evaluating rule {i+1}/{len(rules)}: {rule_name} ---")
+            
+            result = evaluate_rule(payload, rule)
+            rule_results.append(result['matched'])
+            
+            rule_detail = {
+                "rule_index": i,
+                "rule_name": rule_name,
+                "matched": result['matched'],
+                "matched_groups": result['matched_groups'],
+                "extracted_values": result['extracted_values'],
+                "impact_level": result['impact_level']
+            }
+            all_matched_details.append(rule_detail)
+            
+            if result['matched']:
+                matched_rules.append(rule_name)
+                if result['impact_level']:
+                    impact_levels.append(result['impact_level'].lower())
+        
+        # Step 2: Combine all rule outcomes using between_rules_connector (BETWEEN-RULE evaluation)
+        between_rules_connector = between_rules_connector.upper()
+        print(f"\n--- BETWEEN-RULE EVALUATION (connector: {between_rules_connector}) ---")
+        print(f"Rule outcomes: {rule_results}")
+        
+        if between_rules_connector == "AND":
+            overall_result = all(rule_results) if rule_results else False
+            print(f"AND logic: all rules must match. Result: {overall_result}")
+        else:  # OR
+            overall_result = any(rule_results) if rule_results else False
+            print(f"OR logic: at least one rule must match. Result: {overall_result}")
+        
+        # Step 3: Select highest impact level from matched rules
+        # Priority: high > medium > low
+        highest_impact = None
+        if impact_levels:
+            if 'high' in impact_levels:
+                highest_impact = 'high'
+            elif 'medium' in impact_levels:
+                highest_impact = 'medium'
+            elif 'low' in impact_levels:
+                highest_impact = 'low'
+        
+        print(f"\n--- FINAL RESULT ---")
+        print(f"Overall result: {overall_result}")
+        print(f"Matched rules: {matched_rules}")
+        print(f"Matched count: {len(matched_rules)}/{len(rules)}")
+        print(f"Impact levels: {impact_levels}, Highest: {highest_impact}")
+        
+        return {
+            "overall_result": overall_result,
+            "matched_rules": matched_rules,
+            "rule_count": len(rules or []),
+            "matched_count": len(matched_rules),
+            "evaluations": all_matched_details,
+            "impact_level": highest_impact
+        }
+    
+    except Exception as e:
+        print(f"Error evaluating all rules: {e}")
+        import traceback
+        traceback.print_exc()
+        return {
+            "overall_result": False,
+            "matched_rules": [],
+            "rule_count": len(rules or []) if rules else 0,
+            "matched_count": 0,
+            "evaluations": [],
+            "impact_level": None
+        }
+
+# ==================== END ADVANCED RULES ENGINE ====================
+
 class ToolData(BaseModel):
     tool_name: str
     time_stamp: str
     payload: dict
+
+class FieldExtraction(BaseModel):
+    """Configuration for extracting a single field from JSON payload"""
+    json_path: str
+    data_type: str  # "string", "number", "boolean", "array"
+    description: Optional[str] = ""
+
+class Condition(BaseModel):
+    """Single condition: field + operator + expected value"""
+    field: FieldExtraction
+    operator: str
+    expected_value: Any = None
+    description: Optional[str] = ""
+
+class ConditionGroup(BaseModel):
+    """Group of conditions combined with AND/OR logic"""
+    conditions: List[Dict[str, Any]]
+    connector: str = "AND"  # "AND" or "OR"
+    description: Optional[str] = ""
+
+class EvaluationRule(BaseModel):
+    """Complete evaluation rule with multiple condition groups"""
+    name: str
+    description: Optional[str] = ""
+    condition_groups: List[Dict[str, Any]]
+    group_connector: str = "AND"  # How to combine groups: "AND" or "OR"
+    impact_level: str = "medium"  # "low", "medium", "high", "critical"
+    enabled: bool = True
 
 class MapRequest(BaseModel):
     tool_name: str
@@ -78,9 +565,16 @@ class MapRequest(BaseModel):
     unique_id_value: Optional[str] = None
     value_path: str
     supplement: Optional[str] = None
+    # Supplement data paths for extracting additional fields
+    supplement_data_paths: Optional[List[Dict[str, str]]] = None  # [{field_name: str, field_path: str, description: str}, ...]
     # Value processing fields
     value_processing_required: Optional[bool] = False
-    value_processing_steps: Optional[list] = None  # List of processing steps (e.g., [{"type": "substring", "separator": ",", "index": 0}])
+    value_processing_steps: Optional[List[Dict[str, Any]]] = None  # List of processing steps (e.g., [{"type": "substring", "separator": ",", "index": 0}])
+    # Advanced rules fields
+    evaluation_mode: str = "simple"  # "simple" or "advanced"
+    secondary_value_fields: Optional[List[Dict[str, Any]]] = None  # List of secondary fields with path and dataType
+    advanced_rules: Optional[List[Dict[str, Any]]] = None  # List of EvaluationRule objects
+    between_rules_connector: str = "AND"  # How to combine multiple rules: "AND" or "OR"
 
 # Trust analysis cycle state
 trust_cycle_state = {
@@ -106,6 +600,14 @@ load_dotenv()
 
 app = FastAPI()
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"], # Allows any origin (like http://localhost:5173 to connect)
+    allow_credentials=True,
+    allow_methods=["*"], 
+    allow_headers=["*"], 
+)
+
 # MongoDB connection details
 MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017/")
 DB_NAME = os.getenv("DB_NAME", "telemetry")
@@ -128,6 +630,13 @@ TOOL_CONFIG_STEP5_COLLECTION = db.get_collection('tool_config_step5')
 TRUST_SCORE_WEIGHTS_COLLECTION = db.get_collection('trust_score_weights')
 TRUST_CYCLE_CONFIG_COLLECTION = db.get_collection('trust_cycle_config')
 
+# Analysis logging collections - store complete analysis details for traceability
+TOOL_REPORTINGS_COLLECTION = db.get_collection('tool_reportings')  # All tool submissions used in analysis
+RULE_EVALUATION_LOGS_COLLECTION = db.get_collection('rule_evaluation_logs')  # Rule evaluation details
+BEHAVIOR_DETERMINATION_LOGS_COLLECTION = db.get_collection('behavior_determination_logs')  # Behavior calculation steps
+TRUST_SCORE_CALCULATION_LOGS_COLLECTION = db.get_collection('trust_score_calculation_logs')  # Score calculation steps
+EVALUATION_REPORT_ANALYSIS_COLLECTION = db.get_collection('evaluation_report_analysis')  # Enhanced reports with linked analysis
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     config = TRUST_CYCLE_CONFIG_COLLECTION.find_one({"config_name": "main_cycle"})
@@ -136,6 +645,7 @@ async def lifespan(app: FastAPI):
         trust_cycle_config['duration'] = config.get('duration', 5)
         trust_cycle_config['time_unit'] = config.get('time_unit', 'minutes')
     print("Trust cycle config loaded:", trust_cycle_config)
+    yield
 
 async def broadcast_cycle_status(status: str, data: dict = None):
     """
@@ -296,6 +806,14 @@ def calculate_trust_score_and_behaviour(tool, payload):
     if tool.get('value_processing_required') and tool.get('value_processing_steps'):
         value = process_value(value, tool.get('value_processing_steps'))
         print("Processed value TA cal:", value)
+
+    # Evaluate advanced rules if configured
+    rule_evaluation_result = None
+    if tool.get('evaluation_mode') == 'advanced' and tool.get('advanced_rules'):
+        between_rules_connector = tool.get('between_rules_connector', 'AND')
+        rule_evaluation_result = evaluate_all_rules(payload, tool.get('advanced_rules'), between_rules_connector)
+        print("Advanced rule evaluation result:", rule_evaluation_result)
+    
     # print(step5_map)
     count = tool.get('count', 1)
     # print("count ", count)
@@ -322,6 +840,21 @@ def calculate_trust_score_and_behaviour(tool, payload):
                 impact = 'Mid'
             else:
                 impact = 'High'
+    # if there is advance evaluation mode, then override the 
+    # If advanced rules are configured and matched, use the highest impact from rules
+    if tool.get('evaluation_mode') == 'advanced' and rule_evaluation_result:
+        if rule_evaluation_result.get('overall_result') and rule_evaluation_result.get('impact_level'):
+            rule_impact = rule_evaluation_result.get('impact_level')
+            print(f"Impact from advanced rules: {rule_impact}")
+            # Convert rule impact to trust score impact format
+            if rule_impact == 'low':
+                impact = 'Low'
+            elif rule_impact == 'medium':
+                impact = 'Mid'
+            elif rule_impact == 'high':
+                impact = 'High'
+
+    print("final impact ", impact)
     # 2. Tool Behaviour
     behaviour = 'suspicious'
     if step2_cfg.get('override_active') == 'true' and count >= int(step2_cfg.get('override_count', '0')):
@@ -372,7 +905,7 @@ def calculate_trust_score_and_behaviour(tool, payload):
             final_cat_behaviour = max_behaviours[0]
         else:
            final_cat_behaviour = 'suspicious'
-    print("final cat", final_cat_behaviour)
+    # print("final cat", final_cat_behaviour)
     # 4. System Behaviour
     step4_cfg = step4 or {}
     all_cat_behaviours = []
@@ -439,6 +972,493 @@ def calculate_trust_score_and_behaviour(tool, payload):
         'percent': percent
     }
 
+def calculate_trust_score_and_behaviour_with_steps(tool: dict, payload: dict) -> dict:
+    """
+    Enhanced version of calculate_trust_score_and_behaviour that captures detailed step information.
+    
+    Returns the standard result dict plus 'behavior_determination_steps' and 'trust_score_steps'
+    """
+    # Fetch all configs
+    step1 = list(TRUST_CONFIG_STEP1_COLLECTION.find({}))
+    step2 = list(TRUST_CONFIG_STEP2_COLLECTION.find({}))
+    step3 = list(TRUST_CONFIG_STEP3_COLLECTION.find({}))
+    step4 = TRUST_CONFIG_STEP4_COLLECTION.find_one({}) or {}
+    step5 = list(TOOL_CONFIG_STEP5_COLLECTION.find({}))
+    weights = TRUST_SCORE_WEIGHTS_COLLECTION.find_one({}) or {
+        'category_weights': {
+            'Security': 20,
+            'Reliability': 20,
+            'Resilience': 20,
+            'Threat Exposure': 20,
+            'Intentions': 20
+        },
+        'behaviour_weights': {
+            'normal': 100,
+            'suspicious': 50,
+            'compromised': 0
+        }
+    }
+    
+    cat = (tool.get('trust_evaluation_category') or 'Uncategorized').strip()
+    cat_key = cat.lower()
+    tool_name = tool.get('tool_name')
+    key = f"{tool_name}|||{cat_key}"
+    
+    step1_map = {f"{cfg.get('tool_name')}|||{(cfg.get('trust_evaluation_category') or 'Uncategorized').strip().lower()}": cfg for cfg in step1}
+    step2_map = {f"{cfg.get('tool_name')}|||{(cfg.get('trust_evaluation_category') or 'Uncategorized').strip().lower()}": cfg for cfg in step2}
+    step3_map = {(cfg.get('trust_evaluation_category') or 'Uncategorized').strip().lower(): cfg for cfg in step3}
+    
+    value_path = tool.get('value_path')
+    value = support_functions.get_by_path(payload, value_path) if value_path else None
+    
+    if tool.get('value_processing_required') and tool.get('value_processing_steps'):
+        value = process_value(value, tool.get('value_processing_steps'))
+    
+    rule_evaluation_result = None
+    if tool.get('evaluation_mode') == 'advanced' and tool.get('advanced_rules'):
+        between_rules_connector = tool.get('between_rules_connector', 'AND')
+        rule_evaluation_result = evaluate_all_rules(payload, tool.get('advanced_rules'), between_rules_connector)
+    
+    count = tool.get('count', 1)
+    behavior_steps = []
+    
+    # STEP 1: Tool Impact Categorisation
+    impact = 'Mid'
+    step1_cfg = step1_map.get(key, {})
+    step2_cfg = step2_map.get(key, {})
+    
+    step1_info = {
+        'step': 1,
+        'name': 'Tool Impact Categorization',
+        'description': 'Determine impact level based on tool value and configuration',
+        'input': {'value': value, 'count': count, 'data_type': tool.get('data_type')},
+        'logic': 'Uses Step 2 override or Step 1 rules based on count and value',
+        'result': None
+    }
+    
+    if step2_cfg.get('override_active') == 'true' and count >= int(step2_cfg.get('override_count', '0')):
+        impact = step2_cfg.get('override_impact', 'Mid')
+        step1_info['logic'] = f"Step 2 override active (count {count} >= {step2_cfg.get('override_count', '0')})"
+    else:
+        if tool.get('data_type') == 'binary':
+            impact = step1_cfg.get(f"{tool_name}_{cat_key}_on" if value == 'ON' else f"{tool_name}_{cat_key}_off", 'Mid')
+        elif tool.get('data_type') == 'categorical':
+            impact = step1_cfg.get(f"{tool_name}_{cat_key}_{value}", 'Mid')
+        elif tool.get('data_type') == 'continuous':
+            val = float(value or tool.get('min_value', 0))
+            lower = float(step1_cfg.get(f"{tool_name}_{cat_key}_slider_lower", tool.get('min_value', 0)))
+            upper = float(step1_cfg.get(f"{tool_name}_{cat_key}_slider_upper", tool.get('max_value', 100)))
+            if val <= lower:
+                impact = 'Low'
+            elif val <= upper:
+                impact = 'Mid'
+            else:
+                impact = 'High'
+            step1_info['logic'] = f"Continuous value {val}: Low if ≤{lower}, Mid if ≤{upper}, else High"
+    
+    if tool.get('evaluation_mode') == 'advanced' and rule_evaluation_result:
+        if rule_evaluation_result.get('overall_result') and rule_evaluation_result.get('impact_level'):
+            rule_impact = rule_evaluation_result.get('impact_level')
+            if rule_impact == 'low':
+                impact = 'Low'
+            elif rule_impact == 'medium':
+                impact = 'Mid'
+            elif rule_impact == 'high':
+                impact = 'High'
+            step1_info['logic'] += ' | Advanced rules matched and override impact'
+    
+    step1_info['result'] = impact
+    behavior_steps.append(step1_info)
+    
+    # STEP 2: Tool Behaviour
+    behaviour = 'suspicious'
+    step2_info = {
+        'step': 2,
+        'name': 'Tool Behavior Determination',
+        'description': 'Determine tool behavior from impact level',
+        'input': {'impact': impact},
+        'logic': None,
+        'result': None
+    }
+    
+    if step2_cfg.get('override_active') == 'true' and count >= int(step2_cfg.get('override_count', '0')):
+        behaviour = step2_cfg.get('override_behaviour', 'suspicious')
+        step2_info['logic'] = f"Override active: {behaviour}"
+    else:
+        if impact == 'Low':
+            behaviour = 'normal'
+        elif impact == 'Mid':
+            behaviour = 'suspicious'
+        else:
+            behaviour = 'compromised'
+        step2_info['logic'] = f"Impact {impact} → {behaviour}"
+    
+    step2_info['result'] = behaviour
+    behavior_steps.append(step2_info)
+    
+    # STEP 3: Category Behaviour
+    step3_cfg = step3_map.get(cat_key, {})
+    mapped_tools = list(mapped_collection.find({'trust_evaluation_category': cat}))
+    tool_behaviours = []
+    for t in mapped_tools:
+        if t.get('tool_name') == tool_name:
+            tb = behaviour
+        else:
+            last = db['tool_behaviour_results'].find_one({'tool_name': t.get('tool_name'), 'trust_evaluation_category': cat})
+            tb = last['behaviour'] if last else 'suspicious'
+        tool_behaviours.append(tb)
+    
+    final_cat_behaviour = 'suspicious'
+    step3_info = {
+        'step': 3,
+        'name': 'Category Behavior Determination',
+        'description': 'Aggregate tool behaviors to determine category behavior',
+        'input': {'tool_behaviors': tool_behaviours},
+        'logic': None,
+        'result': None
+    }
+    
+    if step3_cfg.get('override_active') == 'true':
+        count_override = int(step3_cfg.get('override_count', '0'))
+        target = step3_cfg.get('override_behaviour', 'suspicious')
+        tool_behaviour = step3_cfg.get('tool_behaviour', 'suspicious')
+        num = sum(1 for b in tool_behaviours if b == tool_behaviour)
+        if num >= count_override:
+            final_cat_behaviour = target
+            step3_info['logic'] = f"Override: {num} tools with {tool_behaviour} >= threshold {count_override}, result: {target}"
+        else:
+            counts = {b: tool_behaviours.count(b) for b in ['normal', 'suspicious', 'compromised']}
+            max_count = max(counts.values())
+            max_behaviours = [k for k, v in counts.items() if v == max_count]
+            final_cat_behaviour = max_behaviours[0] if len(max_behaviours) == 1 else 'suspicious'
+            step3_info['logic'] = f"Override inactive, counts: {counts}, selected: {final_cat_behaviour}"
+    else:
+        counts = {b: tool_behaviours.count(b) for b in ['normal', 'suspicious', 'compromised']}
+        max_count = max(counts.values())
+        max_behaviours = [k for k, v in counts.items() if v == max_count]
+        final_cat_behaviour = max_behaviours[0] if len(max_behaviours) == 1 else 'suspicious'
+        step3_info['logic'] = f"Counts: {counts}, selected: {final_cat_behaviour}"
+    
+    step3_info['result'] = final_cat_behaviour
+    behavior_steps.append(step3_info)
+    
+    # STEP 4: System Behaviour
+    step4_cfg = step4 or {}
+    all_cat_behaviours = []
+    all_cats = TRUST_CONFIG_STEP3_COLLECTION.find({})
+    for c_cfg in all_cats:
+        cat_name = c_cfg.get('trust_evaluation_category')
+        last_cat = db['category_behaviour_results'].find_one({'trust_evaluation_category': {'$regex': f"^{cat_name}$", '$options': 'i'}})
+        b = last_cat['behaviour'] if last_cat else 'suspicious'
+        if cat_name == cat.lower():
+            b = final_cat_behaviour
+        all_cat_behaviours.append(b)
+    
+    system_behaviour = 'suspicious'
+    step4_info = {
+        'step': 4,
+        'name': 'System Behavior Determination',
+        'description': 'Aggregate category behaviors to determine system behavior',
+        'input': {'category_behaviors': all_cat_behaviours},
+        'logic': None,
+        'result': None
+    }
+    
+    if step4_cfg.get('override_active') == 'true':
+        count_override = int(step4_cfg.get('override_count', '0'))
+        target = step4_cfg.get('final_behaviour', 'suspicious')
+        category_behaviour = step4_cfg.get('override_behaviour', 'suspicious')
+        num = all_cat_behaviours.count(category_behaviour)
+        if num >= count_override:
+            system_behaviour = target
+            step4_info['logic'] = f"Override: {num} categories with {category_behaviour} >= {count_override}, result: {target}"
+        else:
+            counts = {b: all_cat_behaviours.count(b) for b in ['normal', 'suspicious', 'compromised']}
+            max_count = max(counts.values())
+            max_behaviours = [k for k, v in counts.items() if v == max_count]
+            system_behaviour = max_behaviours[0] if len(max_behaviours) == 1 else 'suspicious'
+            step4_info['logic'] = f"Override inactive, counts: {counts}, selected: {system_behaviour}"
+    else:
+        counts = {b: all_cat_behaviours.count(b) for b in ['normal', 'suspicious', 'compromised']}
+        max_count = max(counts.values())
+        max_behaviours = [k for k, v in counts.items() if v == max_count]
+        system_behaviour = max_behaviours[0] if len(max_behaviours) == 1 else 'suspicious'
+        step4_info['logic'] = f"Counts: {counts}, selected: {system_behaviour}"
+    
+    step4_info['result'] = system_behaviour
+    behavior_steps.append(step4_info)
+    
+    # STEP 5: Trust Score Calculation
+    behaviour_weights = weights.get('behaviour_weights', {'normal': 100, 'suspicious': 50, 'compromised': 0})
+    cat_weights = weights.get('category_weights', {})
+    cat_weight = cat_weights.get(cat, 20)
+    beh_weight = behaviour_weights.get(behaviour, 100)
+    max_beh_weight = max(behaviour_weights.values())
+    max_score = max_beh_weight * cat_weight
+    real_score = beh_weight * cat_weight
+    percent = (real_score / max_score) * 100 if max_score > 0 else 0
+    
+    score_steps = [
+        {
+            'step': 1,
+            'name': 'Get Category Weight',
+            'description': f'Lookup weight for category "{cat}"',
+            'formula': f"cat_weight = weights['category_weights']['{cat}']",
+            'input': {'category': cat},
+            'result': cat_weight
+        },
+        {
+            'step': 2,
+            'name': 'Get Behavior Weight',
+            'description': f'Lookup weight for behavior "{behaviour}"',
+            'formula': f"beh_weight = weights['behaviour_weights']['{behaviour}']",
+            'input': {'behavior': behaviour},
+            'result': beh_weight
+        },
+        {
+            'step': 3,
+            'name': 'Calculate Maximum Score',
+            'description': 'Maximum possible score = max_behavior_weight × category_weight',
+            'formula': f'max_score = {max_beh_weight} × {cat_weight}',
+            'input': {'max_behavior_weight': max_beh_weight, 'category_weight': cat_weight},
+            'result': max_score
+        },
+        {
+            'step': 4,
+            'name': 'Calculate Actual Score',
+            'description': 'Actual score = behavior_weight × category_weight',
+            'formula': f'real_score = {beh_weight} × {cat_weight}',
+            'input': {'behavior_weight': beh_weight, 'category_weight': cat_weight},
+            'result': real_score
+        },
+        {
+            'step': 5,
+            'name': 'Calculate Percentage',
+            'description': 'Percentage = (actual_score / max_score) × 100',
+            'formula': f'percent = ({real_score} / {max_score}) × 100',
+            'input': {'actual_score': real_score, 'max_score': max_score},
+            'result': percent
+        }
+    ]
+    
+    result = {
+        'tool_name': tool_name,
+        'trust_evaluation_category': cat,
+        'unique_id_value': support_functions.get_by_path(payload, tool.get('unique_id_path', '')),
+        'value': value,
+        'count': count,
+        'impact': impact,
+        'behaviour': behaviour,
+        'category_behaviour': final_cat_behaviour,
+        'system_behaviour': system_behaviour,
+        'trust_score': real_score,
+        'max_score': max_score,
+        'percent': percent,
+        # New step information
+        'behavior_determination_steps': behavior_steps,
+        'trust_score_calculation_steps': score_steps
+    }
+    
+    return result
+
+def _extract_tool_reporting_data(mapped_config: dict, payload: dict, timestamp: str) -> dict:
+    """
+    Extracts tool reporting data from payload using mapped request configuration.
+    
+    Returns:
+    {
+        'tool_name': str,
+        'unique_id': str,
+        'value': any,
+        'category': str,
+        'timestamp': datetime,
+        'supplement_data': dict,
+        'full_payload': dict,
+        'mapped_config_id': str
+    }
+    """
+    tool_reporting = {
+        'tool_name': mapped_config.get('tool_name'),
+        'category': (mapped_config.get('trust_evaluation_category') or 'Uncategorized').strip(),
+        'timestamp': datetime.fromisoformat(timestamp) if isinstance(timestamp, str) else timestamp,
+        'unique_id': support_functions.get_by_path(payload, mapped_config.get('unique_id_path', '')),
+        'value': support_functions.get_by_path(payload, mapped_config.get('value_path', '')),
+        'full_payload': payload,
+        'supplement_data': {}
+    }
+    
+    # Extract supplement fields if configured
+    if mapped_config.get('supplement') or mapped_config.get('supplement_data_paths'):
+        supplement_paths = mapped_config.get('supplement_data_paths', [])
+        for field_config in supplement_paths:
+            field_name = field_config.get('field_name', '')
+            field_path = field_config.get('field_path', '')
+            if field_name and field_path:
+                extracted_value = support_functions.get_by_path(payload, field_path)
+                tool_reporting['supplement_data'][field_name] = extracted_value
+    
+    return tool_reporting
+
+def _save_tool_reporting(tool_reporting: dict, evaluation_report_id: str = None) -> str:
+    """
+    Saves tool reporting to database.
+    
+    Returns: reporting_id (MongoDB ObjectId as string)
+    """
+    # Ensure timestamp is datetime object
+    if 'timestamp' in tool_reporting and isinstance(tool_reporting['timestamp'], str):
+        tool_reporting['timestamp'] = datetime.fromisoformat(tool_reporting['timestamp'])
+    elif 'timestamp' not in tool_reporting:
+        tool_reporting['timestamp'] = datetime.utcnow()
+    
+    if evaluation_report_id:
+        tool_reporting['evaluation_report_id'] = ObjectId(evaluation_report_id)
+    
+    result = TOOL_REPORTINGS_COLLECTION.insert_one(tool_reporting)
+    return str(result.inserted_id)
+
+def _save_rule_evaluation_log(tool_name: str, category: str, timestamp, 
+                              rules_evaluated: list, overall_result: bool,
+                              evaluation_report_id: str = None) -> str:
+    """
+    Saves rule evaluation log to database with full details.
+    
+    Args:
+        tool_name: Name of the tool
+        category: Trust evaluation category
+        timestamp: When the evaluation occurred
+        rules_evaluated: List of rule evaluation details from evaluate_all_rules()
+        overall_result: Overall result of all rules combined
+        evaluation_report_id: Associated evaluation report ID
+    
+    Returns: log_id (MongoDB ObjectId as string)
+    """
+    # Convert timestamp to datetime if needed
+    if isinstance(timestamp, str):
+        ts = datetime.fromisoformat(timestamp)
+    else:
+        ts = timestamp if isinstance(timestamp, datetime) else datetime.utcnow()
+    
+    # Process rule evaluations to include full details
+    processed_rules = []
+    for rule in rules_evaluated:
+        processed_rule = {
+            'rule_index': rule.get('rule_index'),
+            'rule_name': rule.get('rule_name'),
+            'matched': rule.get('matched', False),
+            'impact_level': rule.get('impact_level'),
+            'extracted_values': rule.get('extracted_values', {}),
+            'matched_groups': rule.get('matched_groups', [])
+        }
+        processed_rules.append(processed_rule)
+    
+    log_doc = {
+        'tool_name': tool_name,
+        'category': category,
+        'timestamp': ts,
+        'rules_evaluated': processed_rules,
+        'overall_result': overall_result,
+        'summary': {
+            'total_rules': len(rules_evaluated),
+            'rules_matched': sum(1 for r in processed_rules if r.get('matched', False)),
+            'overall_result': overall_result
+        }
+    }
+    
+    if evaluation_report_id:
+        log_doc['evaluation_report_id'] = ObjectId(evaluation_report_id)
+    
+    result = RULE_EVALUATION_LOGS_COLLECTION.insert_one(log_doc)
+    return str(result.inserted_id)
+
+def _save_behavior_determination_log(tool_name: str, category: str, timestamp,
+                                      steps: list, final_behaviour: str,
+                                      evaluation_report_id: str = None,
+                                      advanced_rules_result: dict = None) -> str:
+    """
+    Saves behavior determination steps to database.
+    
+    Args:
+        tool_name: Name of the tool
+        category: Trust evaluation category
+        timestamp: When the determination occurred
+        steps: List of behavior determination steps
+        final_behaviour: Final behavior result (normal/suspicious/compromised)
+        evaluation_report_id: Associated evaluation report ID
+        advanced_rules_result: Advanced rules evaluation result dict with 'overall_result' and 'matched_rules'
+    
+    Returns: log_id (MongoDB ObjectId as string)
+    """
+    # Convert timestamp to datetime if needed
+    if isinstance(timestamp, str):
+        ts = datetime.fromisoformat(timestamp)
+    else:
+        ts = timestamp if isinstance(timestamp, datetime) else datetime.utcnow()
+    
+    log_doc = {
+        'tool_name': tool_name,
+        'category': category,
+        'timestamp': ts,
+        'steps': steps,
+        'final_behaviour': final_behaviour,
+        'confidence': 0.95  # Can be calculated based on steps
+    }
+    
+    # Add advanced rules information if available
+    if advanced_rules_result:
+        log_doc['advanced_rules'] = {
+            'evaluated': True,
+            'overall_result': advanced_rules_result.get('overall_result', False),
+            'matched_count': advanced_rules_result.get('matched_count', 0),
+            'total_rules': advanced_rules_result.get('rule_count', 0),
+            'matched_rules': advanced_rules_result.get('matched_rules', [])
+        }
+    else:
+        log_doc['advanced_rules'] = {
+            'evaluated': False,
+            'overall_result': False,
+            'matched_count': 0,
+            'total_rules': 0,
+            'matched_rules': []
+        }
+    
+    if evaluation_report_id:
+        log_doc['evaluation_report_id'] = ObjectId(evaluation_report_id)
+    
+    result = BEHAVIOR_DETERMINATION_LOGS_COLLECTION.insert_one(log_doc)
+    return str(result.inserted_id)
+
+def _save_trust_score_calculation_log(tool_name: str, category: str, timestamp,
+                                      steps: list, final_score: float, 
+                                      final_max_score: float, final_percentage: float,
+                                      evaluation_report_id: str = None) -> str:
+    """
+    Saves trust score calculation steps to database.
+    
+    Returns: log_id (MongoDB ObjectId as string)
+    """
+    # Convert timestamp to datetime if needed
+    if isinstance(timestamp, str):
+        ts = datetime.fromisoformat(timestamp)
+    else:
+        ts = timestamp if isinstance(timestamp, datetime) else datetime.utcnow()
+    
+    log_doc = {
+        'tool_name': tool_name,
+        'category': category,
+        'timestamp': ts,
+        'steps': steps,
+        'final_score': final_score,
+        'final_max_score': final_max_score,
+        'final_percentage': final_percentage
+    }
+    
+    if evaluation_report_id:
+        log_doc['evaluation_report_id'] = ObjectId(evaluation_report_id)
+    
+    result = TRUST_SCORE_CALCULATION_LOGS_COLLECTION.insert_one(log_doc)
+    return str(result.inserted_id)
+
 @app.post("/submit")
 async def submit_data(data: ToolData):
     # print(data)
@@ -453,7 +1473,9 @@ async def submit_data(data: ToolData):
         unique_id_path = m.get("unique_id_path", "")
         mapped_unique_id_value = m.get("unique_id_value", None)
         incoming_unique_id_value = support_functions.get_by_path(data.payload, unique_id_path)
-        
+        print("unique_id_path:", unique_id_path)
+        print("mapped_unique_id_value:", mapped_unique_id_value)
+        print("incoming_unique_id_value:", incoming_unique_id_value)
         # If request matches a mapping, don't save to tool_data collection
         if (unique_id_path and mapped_unique_id_value is not None and 
             incoming_unique_id_value is not None and 
@@ -468,7 +1490,7 @@ async def submit_data(data: ToolData):
         doc_copy["_id"] = str(result.inserted_id)
         status_msg = "Saved for later mapping (no matching mappings found)" if not is_mapped else "Saved for later mapping (no mappings found)"
         return {"status": "ok", "results": status_msg, "submitted_payload": doc_copy}
-
+    
     if trust_cycle_config["enabled"] and trust_cycle_state["is_running"]:
         trust_cycle_state["submissions"].append(data.model_dump())
         return {"status": "ok", "message": "Data queued for batch analysis."}
@@ -498,6 +1520,31 @@ async def submit_data(data: ToolData):
                     value = process_value(value, m.get('value_processing_steps'))
                     print("Processed value:", value)
                 
+                # Evaluate advanced rules if configured (evaluation_mode = "advanced")
+                rule_evaluation_result = None
+                if m.get('evaluation_mode') == 'advanced' and m.get('advanced_rules'):
+                    between_rules_connector = m.get('between_rules_connector', 'AND')
+                    rule_evaluation_result = evaluate_all_rules(data.payload, m.get('advanced_rules'), between_rules_connector)
+                    print("Rule evaluation result:", rule_evaluation_result)
+                    # Store rule evaluation results
+                    db['rule_evaluation_results'].update_one(
+                        {
+                            'tool_name': tool_name,
+                            'trust_evaluation_category': cat,
+                            'timestamp': datetime.utcnow()
+                        },
+                        {
+                            '$set': {
+                                'overall_result': rule_evaluation_result['overall_result'],
+                                'matched_rules': rule_evaluation_result['matched_rules'],
+                                'matched_count': rule_evaluation_result['matched_count'],
+                                'rule_count': rule_evaluation_result['rule_count'],
+                                'evaluations': rule_evaluation_result['evaluations']
+                            }
+                        },
+                        upsert=True
+                    )
+                
                 freq_coll = db['tool_value_frequencies']
                 if data_type in ['binary', 'categorical']:
                     freq_coll.update_one(
@@ -511,34 +1558,36 @@ async def submit_data(data: ToolData):
                         {'$push': {'values': value}, '$set': {'data_type': data_type}},
                         upsert=True
                     )
-                # Calculate trust score and behaviour
-                results = []
-                weights = TRUST_SCORE_WEIGHTS_COLLECTION.find_one({}) or {
-                    'category_weights': {
-                    'Security': 20,
-                    'Reliability': 20,
-                    'Resilience': 20,
-                    'Threat Exposure': 20,
-                    'Intentions': 20
-                    },
-                    'behaviour_weights': {
-                    'normal': 100,
-                    'suspicious': 50,
-                    'compromised': 0
-                    }
-                 }
-                behaviour_weights = weights.get('behaviour_weights', {'normal': 100, 'suspicious': 50, 'compromised': 0})
-                category_weights = weights.get('category_weights', {})
-                # Group mapped tools by category
-                from collections import defaultdict
-                cat_tools = defaultdict(list)
-                for m in mapped:
-                    cat = (m.get('trust_evaluation_category') or 'Uncategorized').strip()
-                    cat_tools[cat].append(m)
-                system_max_score = 0
-                system_real_score = 0
-                # For each category, calculate trust score using most recent values
-                for cat, tools in cat_tools.items():
+    
+    # Calculate trust score and behaviour - ONCE for all tools, not per mapping
+    results = []
+    if mapped:  # Only calculate if there are mapped tools
+        weights = TRUST_SCORE_WEIGHTS_COLLECTION.find_one({}) or {
+            'category_weights': {
+            'Security': 20,
+            'Reliability': 20,
+            'Resilience': 20,
+            'Threat Exposure': 20,
+            'Intentions': 20
+            },
+            'behaviour_weights': {
+            'normal': 100,
+            'suspicious': 50,
+            'compromised': 0
+            }
+         }
+        behaviour_weights = weights.get('behaviour_weights', {'normal': 100, 'suspicious': 50, 'compromised': 0})
+        category_weights = weights.get('category_weights', {})
+        # Group mapped tools by category
+        from collections import defaultdict
+        cat_tools = defaultdict(list)
+        for m in mapped:
+            cat = (m.get('trust_evaluation_category') or 'Uncategorized').strip()
+            cat_tools[cat].append(m)
+        system_max_score = 0
+        system_real_score = 0
+        # For each category, calculate trust score using most recent values
+        for cat, tools in cat_tools.items():
                     cat_key = cat
                     cat_weight = category_weights.get(cat, 20)
                     max_beh_weight = max(behaviour_weights.values())
@@ -551,10 +1600,63 @@ async def submit_data(data: ToolData):
                         most_recent = db['tool_most_recent_values'].find_one({'tool_name': tool['tool_name'], 'trust_evaluation_category': cat})
                         payload = most_recent['payload'] if most_recent else None
                         if payload:
-                            print("tool",tool)
-                            res = calculate_trust_score_and_behaviour(tool, payload)
+                            # print("tool",tool)
+                            # Use enhanced version with step tracking
+                            res = calculate_trust_score_and_behaviour_with_steps(tool, payload)
                             beh_weight = behaviour_weights.get(res['behaviour'], 0)
                             cat_real_score += beh_weight * cat_weight
+                            
+                            # Store comprehensive analysis logging
+                            timestamp = datetime.utcnow()
+                            
+                            # 1. Save tool reporting
+                            tool_reporting_id = _save_tool_reporting({
+                                'tool_name': res['tool_name'],
+                                'unique_id': res['unique_id_value'],
+                                'value': res['value'],
+                                'category': res['trust_evaluation_category'],
+                                'timestamp': timestamp,
+                                'impact': res['impact'],
+                                'full_payload': payload
+                            }, evaluation_report_id=None)  # Will link after report is created
+                            
+                            # Store the tool_reporting_id for later linking
+                            res['tool_reporting_id'] = tool_reporting_id
+                            
+                            # 2. Save rule evaluation log
+                            if tool.get('evaluation_mode') == 'advanced' and rule_evaluation_result:
+                                _save_rule_evaluation_log(
+                                    res['tool_name'],
+                                    res['trust_evaluation_category'],
+                                    timestamp,
+                                    rule_evaluation_result.get('evaluations', []),
+                                    rule_evaluation_result.get('overall_result', False),
+                                    evaluation_report_id=None
+                                )
+                            
+                            # 3. Save behavior determination steps
+                            _save_behavior_determination_log(
+                                res['tool_name'],
+                                res['trust_evaluation_category'],
+                                timestamp,
+                                res.get('behavior_determination_steps', []),
+                                res['behaviour'],
+                                evaluation_report_id=None,
+                                advanced_rules_result=rule_evaluation_result
+                            )
+                            
+                            # 4. Save trust score calculation steps
+                            _save_trust_score_calculation_log(
+                                res['tool_name'],
+                                res['trust_evaluation_category'],
+                                timestamp,
+                                res.get('trust_score_calculation_steps', []),
+                                res['trust_score'],
+                                res['max_score'],
+                                res['percent'],
+                                evaluation_report_id=None
+                            )
+                            
                             # Save tool behaviour result
                             db['tool_behaviour_results'].update_one(
                                 {'tool_name': res['tool_name'], 'trust_evaluation_category': res['trust_evaluation_category']},
@@ -587,20 +1689,79 @@ async def submit_data(data: ToolData):
                             upsert=True
                         )
                     system_real_score += cat_real_score
-                # Calculate system trust score percent
-                system_percent = (system_real_score / system_max_score * 100) if system_max_score > 0 else 0
-                # Save system behaviour result (from last tool)
-                if results:
-                    db['system_behaviour_result'].update_one(
-                        {}, {'$set': {'system_behaviour': results[-1]['system_behaviour']}}, upsert=True)
-                    # Store system behaviour history for pie chart
-                    db['system_behaviour_history'].update_one(
-                        {}, {'$push': {'history': results[-1]['system_behaviour']}}, upsert=True)
-                # Store system trust score history as percentage
-                db['system_trust_score_history'].update_one(
-                    {}, {'$push': {'scores': system_percent}}, upsert=True
+        # Calculate system trust score percent
+        system_percent = (system_real_score / system_max_score * 100) if system_max_score > 0 else 0
+        # Save system behaviour result (from last tool)
+        if results:
+            db['system_behaviour_result'].update_one(
+                {}, {'$set': {'system_behaviour': results[-1]['system_behaviour']}}, upsert=True)
+            # Store system behaviour history for pie chart
+            db['system_behaviour_history'].update_one(
+                {}, {'$push': {'history': results[-1]['system_behaviour']}}, upsert=True)
+        # Store system trust score history as percentage
+        db['system_trust_score_history'].update_one(
+            {}, {'$push': {'scores': system_percent}}, upsert=True
+        )
+        
+        # Generate and save evaluation report for immediate submission
+        if results:
+            evaluation_report = _build_simple_evaluation_report(
+                results=results,
+                system_behaviour=results[-1]['system_behaviour'],
+                system_percent=system_percent,
+                category_weights=category_weights,
+                behaviour_weights=behaviour_weights
+            )
+            
+            # Create report with analysis linking
+            report_doc = {
+                'timestamp': datetime.utcnow(),
+                'cycle_submissions_count': 1,
+                'evaluation_mode': 'immediate',
+                'report': evaluation_report,
+                'system_behaviour': results[-1]['system_behaviour'],
+                'system_trust_score_percentage': system_percent
+            }
+            report_result = db['trust_evaluation_reports'].insert_one(report_doc)
+            report_id = report_result.inserted_id
+            
+            # Link this report to all analysis logs created during this submission
+            # Collect all tool reporting IDs that were created for this evaluation
+            tool_reporting_ids = [r.get('tool_reporting_id') for r in results if r.get('tool_reporting_id')]
+            
+            # Update tool reportings with report_id (only the ones from this evaluation)
+            if tool_reporting_ids:
+                from bson import ObjectId
+                TOOL_REPORTINGS_COLLECTION.update_many(
+                    {'_id': {'$in': [ObjectId(rid) if isinstance(rid, str) else rid for rid in tool_reporting_ids]}},
+                    {'$set': {'evaluation_report_id': report_id}}
                 )
-                return {"status": "ok", "results": {"system_percent": system_percent}}
+            
+            # Build a list of unique tool_name/category combinations from results
+            tool_category_pairs = []
+            for result in results:
+                tool_name = result.get('tool_name', '')
+                category = result.get('trust_evaluation_category', '')
+                pair = (tool_name, category)
+                if pair not in tool_category_pairs:
+                    tool_category_pairs.append(pair)
+            
+            # Link behavior, score, and rule logs for ALL tool/category pairs
+            for tool_name, category in tool_category_pairs:
+                BEHAVIOR_DETERMINATION_LOGS_COLLECTION.update_many(
+                    {'tool_name': tool_name, 'category': category, 'evaluation_report_id': {'$exists': False}},
+                    {'$set': {'evaluation_report_id': report_id}}
+                )
+                TRUST_SCORE_CALCULATION_LOGS_COLLECTION.update_many(
+                    {'tool_name': tool_name, 'category': category, 'evaluation_report_id': {'$exists': False}},
+                    {'$set': {'evaluation_report_id': report_id}}
+                )
+                RULE_EVALUATION_LOGS_COLLECTION.update_many(
+                    {'tool_name': tool_name, 'category': category, 'evaluation_report_id': {'$exists': False}},
+                    {'$set': {'evaluation_report_id': report_id}}
+                )
+        
+        return {"status": "ok", "results": {"system_percent": system_percent}}
             # else:
             #     print("Unique ID value mismatch:", new_unique_id_value, mapped_unique_id_value)
     result = collection.insert_one(doc)
@@ -880,6 +2041,127 @@ async def save_value_processing(request: Request):
             return {"status": "error", "message": "Mapping not found or not updated"}
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
+
+# ==================== ADVANCED RULES API ENDPOINTS ====================
+
+@app.get("/advanced-rules/operators")
+async def get_operators():
+    """
+    Return available operators grouped by data type.
+    """
+    return {
+        "string_operators": [
+            "equals", "not_equals", "contains", "not_contains",
+            "starts_with", "ends_with", "in_list", "not_in_list", "matches_regex"
+        ],
+        "numeric_operators": [
+            "equals", "not_equals", "gt", "gte", "lt", "lte", "between", "not_between"
+        ],
+        "boolean_operators": [
+            "is_true", "is_false", "equals"
+        ]
+    }
+
+@app.post("/advanced-rules/validate-operator")
+async def validate_operator(request: Request):
+    """
+    Test a single operator comparison.
+    """
+    try:
+        data = await request.json()
+        field_value = data.get("field_value")
+        operator = data.get("operator")
+        expected_value = data.get("expected_value")
+        data_type = data.get("data_type", "string")
+        
+        result = compare_values(field_value, operator, expected_value, data_type)
+        
+        return {
+            "valid": result,
+            "message": f"Operator '{operator}' result: {result}"
+        }
+    except Exception as e:
+        return JSONResponse(status_code=400, content={
+            "valid": False,
+            "message": str(e)
+        })
+
+@app.post("/advanced-rules/test-condition")
+async def test_condition(request: Request):
+    """
+    Test evaluation of a single condition against a payload.
+    """
+    try:
+        data = await request.json()
+        payload = data.get("payload", {})
+        condition = data.get("condition", {})
+        
+        result, extracted_value = evaluate_condition(payload, condition)
+        
+        return {
+            "result": result,
+            "extracted_value": extracted_value,
+            "message": f"Condition {'matched' if result else 'did not match'}"
+        }
+    except Exception as e:
+        return JSONResponse(status_code=400, content={
+            "result": False,
+            "message": str(e)
+        })
+
+@app.post("/advanced-rules/test-rule")
+async def test_rule(request: Request):
+    """
+    Test evaluation of a complete rule against a payload.
+    """
+    try:
+        data = await request.json()
+        payload = data.get("payload", {})
+        rule = data.get("rule", {})
+        
+        result = evaluate_rule(payload, rule)
+        
+        return {
+            "result": result['matched'],
+            "matched_groups": result['matched_groups'],
+            "extracted_values": result['extracted_values'],
+            "impact_level": result['impact_level'],
+            "message": f"Rule {'matched' if result['matched'] else 'did not match'}"
+        }
+    except Exception as e:
+        return JSONResponse(status_code=400, content={
+            "result": False,
+            "message": str(e)
+        })
+
+@app.post("/advanced-rules/test-all-rules")
+async def test_all_rules(request: Request):
+    """
+    Test evaluation of all rules against a payload.
+    """
+    try:
+        data = await request.json()
+        payload = data.get("payload", {})
+        rules = data.get("rules", [])
+        global_connector = data.get("global_connector", "AND")
+        
+        result = evaluate_all_rules(payload, rules, global_connector)
+        
+        return {
+            "overall_result": result['overall_result'],
+            "matched_rules": result['matched_rules'],
+            "rule_count": result['rule_count'],
+            "matched_count": result['matched_count'],
+            "evaluations": result['evaluations'],
+            "message": f"Evaluation complete: {result['matched_count']}/{result['rule_count']} rules matched"
+        }
+    except Exception as e:
+        return JSONResponse(status_code=400, content={
+            "overall_result": False,
+            "message": str(e)
+        })
+
+# ==================== END ADVANCED RULES API ENDPOINTS ====================
 
 @app.get("/mapped")
 async def get_mapped():
@@ -1260,6 +2542,508 @@ async def stream_cycle_status():
     
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
+@app.get("/trust-evaluation-reports")
+async def get_evaluation_reports(limit: int = 10):
+    """
+    Retrieve the most recent evaluation reports.
+    
+    Args:
+        limit: Maximum number of reports to return (default: 10)
+    
+    Returns:
+        List of evaluation reports sorted by timestamp (newest first)
+    """
+    try:
+        reports = list(db['trust_evaluation_reports'].find({})
+                      .sort('timestamp', -1)
+                      .limit(limit))
+        
+        # Serialize ObjectId and datetime to strings
+        for report in reports:
+            report['_id'] = str(report['_id'])
+            if 'timestamp' in report:
+                report['timestamp'] = report['timestamp'].isoformat()
+        
+        return {"status": "success", "reports": reports}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"status": "fail", "error": str(e)})
+
+@app.get("/trust-evaluation-reports/latest")
+async def get_latest_evaluation_report():
+    """
+    Retrieve the most recent evaluation report.
+    """
+    try:
+        report = db['trust_evaluation_reports'].find_one({}, sort=[('timestamp', -1)])
+        
+        if not report:
+            return JSONResponse(status_code=404, content={"status": "fail", "error": "No reports found"})
+        
+        report['_id'] = str(report['_id'])
+        if 'timestamp' in report:
+            report['timestamp'] = report['timestamp'].isoformat()
+        
+        return {"status": "success", "report": report}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"status": "fail", "error": str(e)})
+
+@app.get("/trust-evaluation-reports/{report_id}")
+async def get_evaluation_report(report_id: str):
+    """
+    Retrieve a specific evaluation report by ID.
+    """
+    try:
+        from bson import ObjectId
+        report = db['trust_evaluation_reports'].find_one({"_id": ObjectId(report_id)})
+        
+        if not report:
+            return JSONResponse(status_code=404, content={"status": "fail", "error": "Report not found"})
+        
+        report['_id'] = str(report['_id'])
+        if 'timestamp' in report:
+            report['timestamp'] = report['timestamp'].isoformat()
+        
+        return {"status": "success", "report": report}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"status": "fail", "error": str(e)})
+
+# ==================== Analysis Logging Retrieval Endpoints ====================
+
+@app.get("/api/analysis-report/{report_id}")
+async def get_analysis_report(report_id: str):
+    """
+    Get all analysis details (tool reportings, behavior steps, score steps, rule evaluations) for a specific report
+    """
+    from bson import ObjectId
+    try:
+        report_oid = ObjectId(report_id)
+    except:
+        return JSONResponse(status_code=400, content={"error": "Invalid report ID format"})
+    
+    try:
+        # Get tool reportings
+        tool_reportings = list(db['tool_reportings'].find(
+            {'evaluation_report_id': report_oid},
+            {'_id': 1, 'tool_name': 1, 'unique_id': 1, 'value': 1, 'category': 1, 'impact': 1, 'timestamp': 1}
+        ))
+        
+        # Get behavior logs
+        behavior_logs = list(db['behavior_determination_logs'].find(
+            {'evaluation_report_id': report_oid},
+            {'_id': 1, 'tool_name': 1, 'category': 1, 'steps': 1, 'final_behaviour': 1, 'advanced_rules': 1}
+        ))
+        
+        # Get score calculation logs
+        score_logs = list(db['trust_score_calculation_logs'].find(
+            {'evaluation_report_id': report_oid},
+            {'_id': 1, 'tool_name': 1, 'category': 1, 'steps': 1, 'final_score': 1, 'final_max_score': 1, 'final_percentage': 1}
+        ))
+        
+        # Get rule evaluation logs
+        rule_logs = list(db['rule_evaluation_logs'].find(
+            {'evaluation_report_id': report_oid},
+            {'_id': 1, 'tool_name': 1, 'category': 1, 'overall_result': 1, 'rules_evaluated': 1, 'summary': 1}
+        ))
+        
+        # Convert ObjectIds to strings for JSON serialization
+        for item in tool_reportings + behavior_logs + score_logs + rule_logs:
+            if '_id' in item:
+                item['_id'] = str(item['_id'])
+            if 'evaluation_report_id' in item:
+                item['evaluation_report_id'] = str(item['evaluation_report_id'])
+            if 'timestamp' in item and hasattr(item['timestamp'], 'isoformat'):
+                item['timestamp'] = item['timestamp'].isoformat()
+        
+        return {
+            "status": "success",
+            "tool_reportings": tool_reportings,
+            "behavior_determination_logs": behavior_logs,
+            "trust_score_calculation_logs": score_logs,
+            "rule_evaluation_logs": rule_logs
+        }
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+@app.get("/api/tool-reporting/{reporting_id}")
+async def get_tool_reporting(reporting_id: str):
+    """Get detailed tool reporting data with full payload"""
+    from bson import ObjectId
+    try:
+        reporting_oid = ObjectId(reporting_id)
+    except:
+        return JSONResponse(status_code=400, content={"error": "Invalid reporting ID format"})
+    
+    try:
+        reporting = db['tool_reportings'].find_one({'_id': reporting_oid})
+        if not reporting:
+            return JSONResponse(status_code=404, content={"error": "Reporting not found"})
+        
+        # Convert ObjectIds
+        reporting['_id'] = str(reporting['_id'])
+        if 'evaluation_report_id' in reporting and reporting['evaluation_report_id']:
+            reporting['evaluation_report_id'] = str(reporting['evaluation_report_id'])
+        if 'timestamp' in reporting and hasattr(reporting['timestamp'], 'isoformat'):
+            reporting['timestamp'] = reporting['timestamp'].isoformat()
+        
+        return {"status": "success", "reporting": reporting}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+@app.get("/api/behavior-steps/{report_id}/{tool_name}/{category}")
+async def get_behavior_steps(report_id: str, tool_name: str, category: str):
+    """Get behavior determination steps for a specific tool in a report"""
+    from bson import ObjectId
+    try:
+        report_oid = ObjectId(report_id)
+    except:
+        return JSONResponse(status_code=400, content={"error": "Invalid report ID format"})
+    
+    try:
+        log = db['behavior_determination_logs'].find_one({
+            'evaluation_report_id': report_oid,
+            'tool_name': tool_name,
+            'category': category
+        })
+        
+        if not log:
+            return JSONResponse(status_code=404, content={"error": "Behavior log not found"})
+        
+        # Convert ObjectIds
+        log['_id'] = str(log['_id'])
+        log['evaluation_report_id'] = str(log['evaluation_report_id'])
+        if 'timestamp' in log and hasattr(log['timestamp'], 'isoformat'):
+            log['timestamp'] = log['timestamp'].isoformat()
+        
+        return {
+            "status": "success",
+            "tool_name": tool_name,
+            "category": category,
+            "steps": log.get('steps', []),
+            "final_behaviour": log.get('final_behaviour'),
+            "confidence": log.get('confidence', 0)
+        }
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+@app.get("/api/trust-score-steps/{report_id}/{tool_name}/{category}")
+async def get_trust_score_steps(report_id: str, tool_name: str, category: str):
+    """Get trust score calculation steps for a specific tool in a report"""
+    from bson import ObjectId
+    try:
+        report_oid = ObjectId(report_id)
+    except:
+        return JSONResponse(status_code=400, content={"error": "Invalid report ID format"})
+    
+    try:
+        log = db['trust_score_calculation_logs'].find_one({
+            'evaluation_report_id': report_oid,
+            'tool_name': tool_name,
+            'category': category
+        })
+        
+        if not log:
+            return JSONResponse(status_code=404, content={"error": "Score calculation log not found"})
+        
+        # Convert ObjectIds
+        log['_id'] = str(log['_id'])
+        log['evaluation_report_id'] = str(log['evaluation_report_id'])
+        if 'timestamp' in log and hasattr(log['timestamp'], 'isoformat'):
+            log['timestamp'] = log['timestamp'].isoformat()
+        
+        return {
+            "status": "success",
+            "tool_name": tool_name,
+            "category": category,
+            "steps": log.get('steps', []),
+            "final_score": log.get('final_score'),
+            "final_max_score": log.get('final_max_score'),
+            "final_percentage": log.get('final_percentage')
+        }
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+@app.get("/api/rule-evaluation/{report_id}/{tool_name}/{category}")
+async def get_rule_evaluation(report_id: str, tool_name: str, category: str):
+    """Get rule evaluation details for a specific tool in a report"""
+    from bson import ObjectId
+    try:
+        report_oid = ObjectId(report_id)
+    except:
+        return JSONResponse(status_code=400, content={"error": "Invalid report ID format"})
+    
+    try:
+        log = db['rule_evaluation_logs'].find_one({
+            'evaluation_report_id': report_oid,
+            'tool_name': tool_name,
+            'category': category
+        })
+        
+        if not log:
+            return {
+                "status": "success",
+                "message": "No advanced rules were evaluated for this tool",
+                "tool_name": tool_name,
+                "category": category,
+                "rules_evaluated": [],
+                "summary": {"total_rules": 0, "rules_matched": 0}
+            }
+        
+        # Convert ObjectIds
+        log['_id'] = str(log['_id'])
+        log['evaluation_report_id'] = str(log['evaluation_report_id'])
+        if 'timestamp' in log and hasattr(log['timestamp'], 'isoformat'):
+            log['timestamp'] = log['timestamp'].isoformat()
+        
+        return {
+            "status": "success",
+            "tool_name": tool_name,
+            "category": category,
+            "rules_evaluated": log.get('rules_evaluated', []),
+            "summary": log.get('summary', {})
+        }
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+def _build_simple_evaluation_report(results, system_behaviour, system_percent, category_weights, behaviour_weights):
+    """
+    Builds a simplified evaluation report for immediate (non-cycle) submissions.
+    Used when trust cycle is not enabled.
+    
+    Args:
+        results: List of trust score calculation results (from calculate_trust_score_and_behaviour)
+        system_behaviour: The determined system behavior
+        system_percent: System trust score percentage
+        category_weights: Category weight configuration
+        behaviour_weights: Behavior weight configuration
+    
+    Returns:
+        A dict with trust_evaluation_report and behaviour_classification_overrides.
+    """
+    from collections import defaultdict
+    
+    trust_evaluation_report = []
+    behaviour_overrides = []
+    
+    # Group results by category
+    results_by_category = defaultdict(list)
+    for result in results:
+        cat = result.get('trust_evaluation_category', 'Uncategorized')
+        results_by_category[cat].append(result)
+    
+    # Build report for each category
+    for cat, cat_results in results_by_category.items():
+        # Aggregate tool information
+        reporting_tools = []
+        
+        for result in cat_results:
+            tool_name = result.get('tool_name')
+            behaviour = result.get('behaviour', 'suspicious')
+            impact = result.get('impact', 'Mid').lower()
+            value = result.get('value')
+            count = result.get('count', 1)
+            
+            reporting_tools.append({
+                'tool_name': tool_name,
+                'tool_reports_submitted': count,
+                'activated_impacts': [
+                    {
+                        'rule': 'impact_rule',
+                        'impact': impact,
+                        'tool_report_timestamp': datetime.utcnow().isoformat()
+                    }
+                ],
+                'final_impact': impact,
+                'tool_final_behaviour': behaviour
+            })
+        
+        # Calculate category trust score
+        cat_weight = category_weights.get(cat, 20)
+        max_beh_weight = max(behaviour_weights.values())
+        num_tools = len(reporting_tools)
+        
+        category_max_trust_score = num_tools * max_beh_weight * cat_weight
+        category_trust_score = sum(
+            behaviour_weights.get(tool['tool_final_behaviour'], 0) * cat_weight 
+            for tool in reporting_tools
+        )
+        category_trust_score_percentage = (category_trust_score / category_max_trust_score * 100) if category_max_trust_score > 0 else 0
+        
+        # Get category behavior from results
+        category_behaviour = cat_results[-1].get('category_behaviour', 'suspicious') if cat_results else 'suspicious'
+        
+        category_report = {
+            'category_name': cat,
+            'category_final_behaviour': category_behaviour,
+            'category_max_trust_score': category_max_trust_score,
+            'category_trust_score': category_trust_score,
+            'category_trust_score_percentage': round(category_trust_score_percentage, 2),
+            'number_of_tools_registered': num_tools,
+            'numer_of_tools_reporting': num_tools,
+            'reporting_tools': reporting_tools,
+            'previous_tool_reports': []
+        }
+        
+        trust_evaluation_report.append(category_report)
+    
+    return {
+        'trust_evaluation_report': trust_evaluation_report,
+        'behaviour_classification_overrides': behaviour_overrides,
+        'system_behaviour': system_behaviour,
+        'system_trust_score_percentage': round(system_percent, 2),
+        'report_timestamp': datetime.utcnow().isoformat()
+    }
+
+def _build_evaluation_report(category_tools, tool_category_behaviours, category_behaviours_map, 
+                              category_tool_value_impacts, tool_results_map, category_weights, 
+                              behaviour_weights, system_behaviour, system_percent, 
+                              step2_configs, step3_configs, step4_config):
+    """
+    Builds a comprehensive trust evaluation report with all details.
+    
+    Returns a dict with trust_evaluation_report and behaviour_classification_overrides.
+    """
+    from collections import defaultdict
+    
+    trust_evaluation_report = []
+    behaviour_overrides = []
+    
+    # Calculate per-category statistics
+    for cat, tools_info in category_tools.items():
+        cat_key = cat.lower()
+        
+        # Get category config for override detection
+        step3_cfg = next((cfg for cfg in step3_configs if (cfg.get('trust_evaluation_category', '').strip().lower() == cat_key)), {})
+        
+        # Count registered vs reporting tools
+        num_tools_registered = len(tools_info)
+        reporting_tools = []
+        previous_tools = []
+        
+        # Collect activated impacts per tool
+        tool_impacts_map = defaultdict(list)  # {tool_name: [{'rule': rule, 'impact': impact, 'timestamp': ts}]}
+        
+        for (vcat, tool_name, value), impact_data in category_tool_value_impacts.items():
+            if vcat == cat:
+                # Group impacts by tool
+                for impact, ts in zip(impact_data['impacts'], impact_data['timestamps']):
+                    tool_impacts_map[tool_name].append({
+                        'value': value,
+                        'impact': impact,
+                        'timestamp': ts
+                    })
+        
+        # Build reporting_tools list (tools that submitted reports this cycle)
+        for tool_info in tools_info:
+            tool_name = tool_info['tool_name']
+            tool_behaviour = tool_info['behaviour']
+            
+            # Get activated impacts for this tool
+            activated_impacts = []
+            if tool_name in tool_impacts_map:
+                for impact_info in tool_impacts_map[tool_name]:
+                    activated_impacts.append({
+                        'rule': 'impact_rule',  # Generic rule name
+                        'impact': impact_info['impact'].lower(),
+                        'tool_report_timestamp': impact_info['timestamp']
+                    })
+            
+            # Get report count and final impact
+            tool_cat_key = (tool_name, cat)
+            tool_reports_submitted = tool_results_map.get(tool_cat_key, {}).get('count', 0)
+            
+            # Determine final impact
+            final_impact = 'low'
+            if activated_impacts:
+                impacts_list = [imp['impact'] for imp in activated_impacts]
+                if 'high' in impacts_list:
+                    final_impact = 'high'
+                elif 'mid' in impacts_list:
+                    final_impact = 'mid'
+                else:
+                    final_impact = 'low'
+            
+            reporting_tools.append({
+                'tool_name': tool_name,
+                'tool_reports_submitted': tool_reports_submitted,
+                'activated_impacts': activated_impacts,
+                'final_impact': final_impact,
+                'tool_final_behaviour': tool_behaviour
+            })
+        
+        # Calculate category trust scores
+        cat_weight = category_weights.get(cat, 20)
+        max_beh_weight = max(behaviour_weights.values())
+        category_max_trust_score = num_tools_registered * max_beh_weight * cat_weight
+        
+        # Calculate actual trust score from reporting tools
+        category_trust_score = 0
+        for tool_info in reporting_tools:
+            tool_behaviour = tool_info['tool_final_behaviour']
+            beh_weight = behaviour_weights.get(tool_behaviour, 0)
+            category_trust_score += beh_weight * cat_weight
+        
+        category_trust_score_percentage = (category_trust_score / category_max_trust_score * 100) if category_max_trust_score > 0 else 0
+        
+        # Check for behaviour overrides at category level
+        if step3_cfg.get('override_active') == 'true':
+            original_behaviour = category_behaviours_map.get(cat, 'suspicious')
+            # Recalculate what behaviour would be without override
+            behaviours_list = [t['tool_final_behaviour'] for t in reporting_tools]
+            if behaviours_list:
+                counts = {'normal': behaviours_list.count('normal'), 'suspicious': behaviours_list.count('suspicious'), 'compromised': behaviours_list.count('compromised')}
+                max_count = max(counts.values())
+                likely_behaviours = [b for b, c in counts.items() if c == max_count]
+                calculated_behaviour = likely_behaviours[0] if likely_behaviours else 'suspicious'
+                
+                if calculated_behaviour != original_behaviour:
+                    behaviour_overrides.append({
+                        'category_name': cat,
+                        'original_behaviour_classification': calculated_behaviour,
+                        'overridden_behaviour_classification': original_behaviour,
+                        'override_reason': f"Config 3 override active: {step3_cfg.get('override_behaviour', 'unknown')}"
+                    })
+        
+        # Build category report entry
+        category_report = {
+            'category_name': cat,
+            'category_final_behaviour': category_behaviours_map.get(cat, 'suspicious'),
+            'category_max_trust_score': category_max_trust_score,
+            'category_trust_score': category_trust_score,
+            'category_trust_score_percentage': round(category_trust_score_percentage, 2),
+            'number_of_tools_registered': num_tools_registered,
+            'numer_of_tools_reporting': len(reporting_tools),  # Note: typo kept for API compatibility
+            'reporting_tools': reporting_tools,
+            'previous_tool_reports': previous_tools
+        }
+        
+        trust_evaluation_report.append(category_report)
+    
+    # Check for system-level behaviour override
+    if step4_config.get('override_active') == 'true':
+        # Recalculate what system behaviour would be without override
+        all_cat_behaviours = [cat_report['category_final_behaviour'] for cat_report in trust_evaluation_report]
+        if all_cat_behaviours:
+            counts = {'normal': all_cat_behaviours.count('normal'), 'suspicious': all_cat_behaviours.count('suspicious'), 'compromised': all_cat_behaviours.count('compromised')}
+            max_count = max(counts.values())
+            likely_behaviours = [b for b, c in counts.items() if c == max_count]
+            calculated_behaviour = likely_behaviours[0] if likely_behaviours else 'suspicious'
+            
+            if calculated_behaviour != system_behaviour:
+                behaviour_overrides.append({
+                    'category_name': 'SYSTEM',
+                    'original_behaviour_classification': calculated_behaviour,
+                    'overridden_behaviour_classification': system_behaviour,
+                    'override_reason': f"Config 4 (System) override active: {step4_config.get('final_behaviour', 'unknown')}"
+                })
+    
+    return {
+        'trust_evaluation_report': trust_evaluation_report,
+        'behaviour_classification_overrides': behaviour_overrides,
+        'system_behaviour': system_behaviour,
+        'system_trust_score_percentage': round(system_percent, 2),
+        'report_timestamp': datetime.utcnow().isoformat()
+    }
+
 async def run_analysis_cycle():
     # Convert duration to seconds based on time_unit
     duration_seconds = convert_duration_to_seconds(
@@ -1547,6 +3331,44 @@ async def perform_batch_analysis():
                 'percent': percent,
                 'values_submitted': values_submitted
             }
+            
+            # Save detailed analysis logs for batch mode
+            timestamp = datetime.utcnow()
+            
+            # 1. Save tool reporting (use most recent payload's timestamp)
+            most_recent_timestamp = category_tool_value_impacts[(cat, tool_name, value)]['timestamps'][-1] if category_tool_value_impacts[(cat, tool_name, value)]['timestamps'] else timestamp
+            tool_reporting_id = _save_tool_reporting({
+                'tool_name': tool_name,
+                'unique_id': unique_id_value,
+                'value': value,
+                'category': cat,
+                'timestamp': most_recent_timestamp,
+                'impact': category_tool_value_impacts[(cat, tool_name, value)]['impacts'][-1] if category_tool_value_impacts[(cat, tool_name, value)]['impacts'] else 'Low',
+                'full_payload': payload
+            }, evaluation_report_id=None)
+            
+            # 2. Save behavior determination log
+            _save_behavior_determination_log(
+                tool_name,
+                cat,
+                timestamp,
+                [],  # No detailed steps for batch mode
+                tool_behaviour,
+                evaluation_report_id=None,
+                advanced_rules_result=None
+            )
+            
+            # 3. Save trust score calculation log
+            _save_trust_score_calculation_log(
+                tool_name,
+                cat,
+                timestamp,
+                [],  # No detailed steps for batch mode
+                trust_score,
+                max_score,
+                percent,
+                evaluation_report_id=None
+            )
 
         print(f"Step 2: Determined behaviors for {len(tool_category_behaviours)} tool-category pairs")
         print(tool_category_behaviours)
@@ -1658,6 +3480,55 @@ async def perform_batch_analysis():
         )
 
         print(f"Batch analysis complete. System Trust Score: {system_percent}%, System Behaviour: {system_behaviour}")
+
+        # ==== STEP 6: Generate comprehensive evaluation report ====
+        evaluation_report = _build_evaluation_report(
+            category_tools=category_tools,
+            tool_category_behaviours=tool_category_behaviours,
+            category_behaviours_map=category_behaviours_map,
+            category_tool_value_impacts=category_tool_value_impacts,
+            tool_results_map=tool_results_map,
+            category_weights=category_weights,
+            behaviour_weights=behaviour_weights,
+            system_behaviour=system_behaviour,
+            system_percent=system_percent,
+            step2_configs=step2_configs,
+            step3_configs=step3_configs,
+            step4_config=step4_config
+        )
+
+        # Save evaluation report to database
+        report_doc = {
+            'timestamp': datetime.utcnow(),
+            'cycle_submissions_count': len(trust_cycle_state["submissions"]),
+            'report': evaluation_report,
+            'system_behaviour': system_behaviour,
+            'system_trust_score_percentage': system_percent
+        }
+        report_result = db['trust_evaluation_reports'].insert_one(report_doc)
+        report_id = report_result.inserted_id
+        
+        # Link this report to all analysis logs created during batch analysis
+        # tool_category_behaviours is {(tool_name, cat): behaviour}, extract unique tool-category pairs
+        for (tool_name, cat), behaviour in tool_category_behaviours.items():
+            TOOL_REPORTINGS_COLLECTION.update_many(
+                {'tool_name': tool_name, 'category': cat, 'evaluation_report_id': {'$exists': False}},
+                {'$set': {'evaluation_report_id': report_id}}
+            )
+            BEHAVIOR_DETERMINATION_LOGS_COLLECTION.update_many(
+                {'tool_name': tool_name, 'category': cat, 'evaluation_report_id': {'$exists': False}},
+                {'$set': {'evaluation_report_id': report_id}}
+            )
+            TRUST_SCORE_CALCULATION_LOGS_COLLECTION.update_many(
+                {'tool_name': tool_name, 'category': cat, 'evaluation_report_id': {'$exists': False}},
+                {'$set': {'evaluation_report_id': report_id}}
+            )
+            RULE_EVALUATION_LOGS_COLLECTION.update_many(
+                {'tool_name': tool_name, 'category': cat, 'evaluation_report_id': {'$exists': False}},
+                {'$set': {'evaluation_report_id': report_id}}
+            )
+
+        print(f"Evaluation report generated and saved to database")
 
     except Exception as e:
         print(f"Error during batch analysis: {e}")
