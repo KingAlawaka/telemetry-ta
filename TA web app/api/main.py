@@ -1,5 +1,5 @@
 from annotated_types import doc
-from pydantic import BaseModel
+from pydantic import BaseModel,Field
 from typing import Optional, List, Dict, Any, Union
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, FileResponse, StreamingResponse
@@ -17,6 +17,8 @@ from fastapi import Body
 from bson import ObjectId
 import os, sys
 from fastapi.middleware.cors import CORSMiddleware
+import requests
+from fastapi.concurrency import run_in_threadpool
 
 sys.path.append(os.path.dirname(__file__))
 
@@ -524,6 +526,67 @@ class ToolData(BaseModel):
     tool_name: str
     time_stamp: str
     payload: dict
+
+# TA Report
+class ActivatedImpact(BaseModel):
+    rule: str
+    impact: str
+    tool_report_timestamp: datetime
+
+
+class ReportingTool(BaseModel):
+    tool_name: str
+    tool_reports_submitted: int
+    activated_impacts: List[ActivatedImpact]
+    final_impact: str
+    tool_final_behaviour: str
+
+
+class PreviousToolReport(BaseModel):
+    tool_name: str
+    tool_reports_submitted: int
+    activated_impacts: List[ActivatedImpact]
+    final_impact: str
+    tool_final_behaviour: str
+
+
+class CategoryEvaluation(BaseModel):
+    category_name: str
+    category_final_behaviour: str
+    category_max_trust_score: float
+    category_trust_score: float
+    category_trust_score_percentage: float
+    number_of_tools_registered: int
+    numer_of_tools_reporting: int
+
+
+class BehaviourOverride(BaseModel):
+    category_name: str
+    original_behaviour_classification: str
+    overridden_behaviour_classification: str
+    override_reason: str
+
+
+class InputIndicator(BaseModel):
+    asset_id: str = Field(alias="asset-id")
+
+
+class TrustAnalyserReport(BaseModel):
+    type: str
+    severity: str
+    value: float
+    timestamp: datetime
+    source: str
+    subject: str
+
+    category_evaluation_report: List[CategoryEvaluation]
+    reporting_tools: List[ReportingTool]
+    previous_tool_reports: List[PreviousToolReport]
+    behaviour_classification_overrides: List[BehaviourOverride]
+    input_indicators: List[InputIndicator]
+
+    class Config:
+        populate_by_name = True
 
 class FieldExtraction(BaseModel):
     """Configuration for extracting a single field from JSON payload"""
@@ -1459,12 +1522,24 @@ def _save_trust_score_calculation_log(tool_name: str, category: str, timestamp,
     result = TRUST_SCORE_CALCULATION_LOGS_COLLECTION.insert_one(log_doc)
     return str(result.inserted_id)
 
+def send_trust_report(data: dict):
+    POST_URL = "http://localhost:8000/ta-report"
+    headers = {
+    "Content-Type": "application/json"
+    }
+    response = requests.post(POST_URL, headers=headers, json=data)
+    print(response.text)
+
 @app.post("/submit")
 async def submit_data(data: ToolData):
     # print(data)
     # print("Received data:", data)
+    
+
     doc = data.model_dump()
     mapped = list(mapped_collection.find({}))
+
+    # send_trust_report(doc)
     # print("map",mapped_collection.find_one({"unique_id_value": "RAD Observation Event"}))
     
     # Check if incoming request matches any existing mapping
@@ -1760,7 +1835,8 @@ async def submit_data(data: ToolData):
                     {'tool_name': tool_name, 'category': category, 'evaluation_report_id': {'$exists': False}},
                     {'$set': {'evaluation_report_id': report_id}}
                 )
-        
+        # generate_TA_report_for_ADI()
+        await run_in_threadpool(generate_TA_report_for_ADI)
         return {"status": "ok", "results": {"system_percent": system_percent}}
             # else:
             #     print("Unique ID value mismatch:", new_unique_id_value, mapped_unique_id_value)
@@ -2542,6 +2618,147 @@ async def stream_cycle_status():
     
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
+def transform_trust_eval_to_report(data: dict) -> TrustAnalyserReport:
+    report_data = data["reports"][0]
+    inner_report = report_data["report"]
+
+    categories = []
+    all_reporting_tools = []
+    all_previous_tools = []
+
+    for cat in inner_report["trust_evaluation_report"]:
+        # Build reporting tools per category
+        reporting_tools = []
+        for tool in cat.get("reporting_tools", []):
+            impacts = [
+                ActivatedImpact(
+                    rule=imp["rule"],
+                    impact=imp["impact"],
+                    tool_report_timestamp=imp["tool_report_timestamp"]
+                )
+                for imp in tool.get("activated_impacts", [])
+            ]
+
+            tool_obj = ReportingTool(
+                tool_name=tool["tool_name"],
+                tool_reports_submitted=tool["tool_reports_submitted"],
+                activated_impacts=impacts,
+                final_impact=tool["final_impact"],
+                tool_final_behaviour=tool["tool_final_behaviour"]
+            )
+
+            reporting_tools.append(tool_obj)
+            all_reporting_tools.append(tool_obj)
+
+        # Previous tools
+        prev_tools = []
+        for tool in cat.get("previous_tool_reports", []):
+            impacts = [
+                ActivatedImpact(
+                    rule=imp["rule"],
+                    impact=imp["impact"],
+                    tool_report_timestamp=imp["tool_report_timestamp"]
+                )
+                for imp in tool.get("activated_impacts", [])
+            ]
+
+            prev_obj = PreviousToolReport(
+                tool_name=tool["tool_name"],
+                tool_reports_submitted=tool["tool_reports_submitted"],
+                activated_impacts=impacts,
+                final_impact=tool["final_impact"],
+                tool_final_behaviour=tool["tool_final_behaviour"]
+            )
+
+            prev_tools.append(prev_obj)
+            all_previous_tools.append(prev_obj)
+
+        # Category object (NOTE: reporting tools are flattened later)
+        category_obj = CategoryEvaluation(
+            category_name=cat["category_name"],
+            category_final_behaviour=cat["category_final_behaviour"].capitalize(),
+            category_max_trust_score=cat["category_max_trust_score"],
+            category_trust_score=cat["category_trust_score"],
+            category_trust_score_percentage=cat["category_trust_score_percentage"],
+            number_of_tools_registered=cat["number_of_tools_registered"],
+            numer_of_tools_reporting=cat["numer_of_tools_reporting"],
+        )
+
+        categories.append(category_obj)
+
+    # Overrides
+    overrides = [
+        BehaviourOverride(**o)
+        for o in inner_report.get("behaviour_classification_overrides", [])
+    ]
+
+    # Final report
+    final_report = TrustAnalyserReport(
+        type="Trust Analyser Report",
+        severity=inner_report["system_behaviour"].upper(),
+        value=inner_report["system_trust_score_percentage"],
+        timestamp=inner_report["report_timestamp"],
+        source="Trust Analyser",
+        subject="Analysis Report",
+
+        category_evaluation_report=categories,
+        reporting_tools=all_reporting_tools,
+        previous_tool_reports=all_previous_tools,
+        behaviour_classification_overrides=overrides,
+        input_indicators=[]  # you can map if needed
+    )
+
+    return final_report
+
+def generate_user_action_report_for_ADI(source: str, severity: str):
+    dt = datetime.utcnow().isoformat()
+    payload = {
+        "payload":{
+            "type": "Trust Analyser Action",
+            "source": source,
+            "timestamp": dt ,
+            "subject": "b85aa2da0d9ba49beb1f116162a3b75028d289d53aadb124afa8d67f1627581b",
+            "severity": severity.upper()
+        }
+    }
+
+    response = requests.post(
+        "http://localhost:8000/ta-user-action",
+        json=payload
+    )
+    print("Submit")
+    # print(response.status_code)
+    # print(response.text)
+    response.raise_for_status()
+
+    return response.json()
+
+
+
+def generate_TA_report_for_ADI():
+    # 1. Fetch from /trust-eval
+    resp = requests.get("http://localhost:8001/trust-evaluation-reports?limit=1")
+    resp.raise_for_status()  # fail fast if error
+    data = resp.json()
+    print("Got data")
+
+    # 2. Transform
+    report = transform_trust_eval_to_report(data)
+    payload = { "payload": report.model_dump(by_alias=True, mode="json")}
+    print("report created")
+
+    # 3. Send to external API
+    response = requests.post(
+        "http://localhost:8000/ta-report",
+        json=payload
+    )
+    print("Submit")
+    # print(response.status_code)
+    # print(response.text)
+    response.raise_for_status()
+
+    return response.json()
+
 @app.get("/trust-evaluation-reports")
 async def get_evaluation_reports(limit: int = 10):
     """
@@ -2804,6 +3021,250 @@ async def get_rule_evaluation(report_id: str, tool_name: str, category: str):
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
 
+# ===== Tool Reporting Action Management =====
+
+@app.post("/api/tool-reporting-action/{reporting_id}")
+async def update_tool_reporting_action(reporting_id: str, action: dict):
+    """
+    Update the action status for a tool reporting.
+    This stores the action by tool identifier (not reporting ID) so it carries forward.
+    
+    Args:
+        reporting_id: The ObjectId of the tool reporting (used to get tool details)
+        action: {
+            "status": "no action" | "reviewing" | "resolved" | "dismiss",
+            "notes": optional string,
+            "tool_name": tool name,
+            "category": category,
+            "unique_id": unique id
+        }
+    
+    Returns:
+        Updated action status
+    """
+    from bson import ObjectId
+    
+    try:
+        reporting_oid = ObjectId(reporting_id)
+    except:
+        return JSONResponse(status_code=400, content={"error": "Invalid reporting ID format"})
+    
+    try:
+        valid_statuses = ["no action", "reviewing", "resolved", "dismiss"]
+        status = action.get("status", "no action")
+        
+        if status not in valid_statuses:
+            return JSONResponse(status_code=400, content={"error": f"Invalid status. Must be one of: {', '.join(valid_statuses)}"})
+        
+        # Get tool details from the action payload
+        tool_name = action.get("tool_name")
+        category = action.get("category")
+        unique_id = action.get("unique_id")
+        
+        if not all([tool_name, category, unique_id]):
+            return JSONResponse(status_code=400, content={"error": "Missing tool_name, category, or unique_id"})
+        
+        # Store action by tool identifier (not reporting ID)
+        action_record = {
+            "tool_name": tool_name,
+            "category": category,
+            "unique_id": unique_id,
+            "status": status,
+            "notes": action.get("notes", ""),
+            "updated_at": datetime.utcnow(),
+            "reporting_id": reporting_oid  # Keep for reference but not for matching
+        }
+        
+        # Update or create action record - match by tool identifier
+        result = db['tool_reporting_actions'].update_one(
+            {
+                "tool_name": tool_name,
+                "category": category,
+                "unique_id": unique_id
+            },
+            {"$set": action_record},
+            upsert=True
+        )
+
+        await run_in_threadpool(generate_user_action_report_for_ADI, tool_name, status)
+        print("action_record")
+        return {
+            "status": "success",
+            "message": f"Action status updated to '{status}'",
+            "tool_name": tool_name,
+            "category": category,
+            "unique_id": unique_id,
+            "action_status": status
+        }
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+@app.get("/api/tool-reporting-action/{reporting_id}")
+async def get_tool_reporting_action(reporting_id: str):
+    """Get the action status for a specific tool reporting by its ID"""
+    from bson import ObjectId
+    
+    try:
+        reporting_oid = ObjectId(reporting_id)
+    except:
+        return JSONResponse(status_code=400, content={"error": "Invalid reporting ID format"})
+    
+    try:
+        # Get the tool reporting to find tool identifier
+        tool_reporting = db['tool_reportings'].find_one({"_id": reporting_oid})
+        
+        if not tool_reporting:
+            return JSONResponse(status_code=404, content={"error": "Tool reporting not found"})
+        
+        tool_name = tool_reporting.get("tool_name")
+        category = tool_reporting.get("category")
+        unique_id = tool_reporting.get("unique_id")
+        
+        # Now look up action by tool identifier
+        action = db['tool_reporting_actions'].find_one({
+            "tool_name": tool_name,
+            "category": category,
+            "unique_id": unique_id
+        })
+        
+        if not action:
+            # Return default "no action" if no record exists
+            return {
+                "status": "success",
+                "reporting_id": reporting_id,
+                "action_status": "no action",
+                "notes": ""
+            }
+        
+        return {
+            "status": "success",
+            "reporting_id": reporting_id,
+            "action_status": action.get("status", "no action"),
+            "notes": action.get("notes", ""),
+            "updated_at": action.get("updated_at").isoformat() if action.get("updated_at") else None
+        }
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+@app.get("/api/tool-action-by-identifier/{tool_name}/{category}/{unique_id}")
+async def get_tool_action_by_identifier(tool_name: str, category: str, unique_id: str):
+    """
+    Get the last known action for a tool identified by tool_name, category, and unique_id.
+    This is detached from any specific reporting and works across all evaluations.
+    """
+    try:
+        print(f"[CARRY-FORWARD DEBUG] Searching for: tool_name='{tool_name}', category='{category}', unique_id='{unique_id}'")
+        
+        # Find action by tool identifier
+        action = db['tool_reporting_actions'].find_one({
+            "tool_name": tool_name,
+            "category": category,
+            "unique_id": unique_id
+        })
+        
+        print(f"[CARRY-FORWARD DEBUG] Found action: {action is not None}")
+        
+        if not action:
+            # No action record for this tool
+            print(f"[CARRY-FORWARD DEBUG] No action found, returning default")
+            return {
+                "status": "success",
+                "has_previous": False,
+                "action_status": "no action"
+            }
+        
+        print(f"[CARRY-FORWARD DEBUG] Action status: {action.get('status')}")
+        
+        result = {
+            "status": "success",
+            "has_previous": True,
+            "action_status": action.get("status", "no action"),
+            "notes": action.get("notes", ""),
+            "updated_at": action.get("updated_at").isoformat() if action.get("updated_at") else None
+        }
+        print(f"[CARRY-FORWARD DEBUG] Returning: {result}")
+        return result
+    except Exception as e:
+        print(f"[CARRY-FORWARD DEBUG] ERROR: {str(e)}")
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+@app.post("/api/batch-tool-reporting-actions")
+async def batch_update_tool_reporting_actions(actions: List[Dict[str, Any]] = Body(...)):
+    """
+    Batch update action statuses for multiple tool reportings.
+    Actions are stored by tool identifier, not reporting ID.
+    
+    Args:
+        actions: List of {
+            "reporting_id": string,
+            "status": "no action" | "reviewing" | "resolved" | "dismiss",
+            "tool_name": string,
+            "category": string,
+            "unique_id": string,
+            "notes": optional string
+        }
+    
+    Returns:
+        Summary of updates
+    """
+    from bson import ObjectId
+    
+    try:
+        valid_statuses = ["no action", "reviewing", "resolved", "dismiss"]
+        updated_count = 0
+        errors = []
+        
+        for action in actions:
+            try:
+                status = action.get("status", "no action")
+                tool_name = action.get("tool_name")
+                category = action.get("category")
+                unique_id = action.get("unique_id")
+                
+                if not all([tool_name, category, unique_id]):
+                    errors.append(f"Missing tool_name, category, or unique_id for action")
+                    continue
+                
+                if status not in valid_statuses:
+                    errors.append(f"Invalid status '{status}' for tool {tool_name}")
+                    continue
+                
+                # Update or create action record - match by tool identifier
+                action_record = {
+                    "tool_name": tool_name,
+                    "category": category,
+                    "unique_id": unique_id,
+                    "status": status,
+                    "notes": action.get("notes", ""),
+                    "updated_at": datetime.utcnow()
+                }
+                
+                db['tool_reporting_actions'].update_one(
+                    {
+                        "tool_name": tool_name,
+                        "category": category,
+                        "unique_id": unique_id
+                    },
+                    {"$set": action_record},
+                    upsert=True
+                )
+                
+                updated_count += 1
+                if status != "no action":
+                    await run_in_threadpool(generate_user_action_report_for_ADI, tool_name, status)
+                    print("action_record")
+            except Exception as e:
+                errors.append(f"Error updating tool {action.get('tool_name')}: {str(e)}")
+        
+        return {
+            "status": "success",
+            "updated_count": updated_count,
+            "total_count": len(actions),
+            "errors": errors if errors else []
+        }
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
 def _build_simple_evaluation_report(results, system_behaviour, system_percent, category_weights, behaviour_weights):
     """
     Builds a simplified evaluation report for immediate (non-cycle) submissions.
@@ -3060,10 +3521,10 @@ async def run_analysis_cycle():
             'message': 'Analysis completed',
             'submissions_analyzed': len(trust_cycle_state["submissions"])
         })
-        # Wait 5 seconds before restarting cycle
-        print("Cycle completed. Waiting 5 seconds before next cycle...")
-        await asyncio.sleep(5)
-        print("5 seconds wait complete. Restarting cycle.")
+        # Wait 2 seconds before restarting cycle
+        print("Cycle completed. Waiting 2 seconds before next cycle...")
+        await asyncio.sleep(2)
+        print("2 seconds wait complete. Restarting cycle.")
         # Check if cycle is still enabled before restarting
         if trust_cycle_config["enabled"] and not trust_cycle_state.get("user_stopped", False):
             # Automatically restart the cycle
@@ -3529,6 +3990,7 @@ async def perform_batch_analysis():
             )
 
         print(f"Evaluation report generated and saved to database")
+        await run_in_threadpool(generate_TA_report_for_ADI)
 
     except Exception as e:
         print(f"Error during batch analysis: {e}")

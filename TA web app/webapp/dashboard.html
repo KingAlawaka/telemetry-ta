@@ -3339,6 +3339,14 @@
             `;
             
             section.innerHTML = html;
+            
+            // Load tool reporting actions after rendering
+            setTimeout(() => {
+                console.log('Loading actions for', data.tool_reportings.length, 'reportings');
+                loadToolReportingActions(data.tool_reportings);
+                setupActionDropdownListeners();
+                setupRecordActionsButton();
+            }, 100);
         } catch (error) {
             console.error('Error:', error);
             section.innerHTML = `<div class="alert alert-danger">Error: ${error.message}</div>`;
@@ -3351,10 +3359,11 @@
         }
         
         let html = '<div class="table-responsive"><table class="table table-sm">';
-        html += '<thead><tr><th>Tool Name</th><th>Unique ID</th><th>Value</th><th>Category</th><th>Impact</th><th>Time</th></tr></thead><tbody>';
+        html += '<thead><tr><th>Tool Name</th><th>Unique ID</th><th>Value</th><th>Category</th><th>Impact</th><th>Action</th><th>Time</th></tr></thead><tbody>';
         
         reportings.forEach(rep => {
             const time = new Date(rep.timestamp).toLocaleTimeString();
+            const actionId = `action-${rep._id}`;
             html += `
                 <tr>
                     <td><strong>${rep.tool_name}</strong></td>
@@ -3362,12 +3371,29 @@
                     <td>${JSON.stringify(rep.value)}</td>
                     <td>${rep.category}</td>
                     <td><span class="badge bg-${rep.impact === 'High' ? 'danger' : rep.impact === 'Mid' ? 'warning' : 'success'}">${rep.impact}</span></td>
+                    <td>
+                        <select id="${actionId}" 
+                                class="form-select form-select-sm tool-action-select" 
+                                data-reporting-id="${rep._id}"
+                                data-tool-name="${rep.tool_name}"
+                                data-category="${rep.category}"
+                                data-unique-id="${rep.unique_id}"
+                                style="max-width: 140px;">
+                            <option value="no action" style="background-color: #d3d3d3;">No Action</option>
+                            <option value="reviewing" style="background-color: #ffc107;">Reviewing</option>
+                            <option value="resolved" style="background-color: #28a745;">Resolved</option>
+                            <option value="dismiss" style="background-color: #ff9800;">Dismiss</option>
+                        </select>
+                    </td>
                     <td><small>${time}</small></td>
                 </tr>
             `;
         });
         
         html += '</tbody></table></div>';
+        html += '<div class="mt-3">';
+        html += '<button class="btn btn-sm btn-primary" id="recordActionsBtn">Record Actions</button>';
+        html += '</div>';
         return html;
     }
     
@@ -3549,6 +3575,233 @@
             el.classList.toggle('d-none');
         }
     }
+    
+    // ==================== Tool Reporting Action Management ====================
+    
+    async function loadToolReportingActions(reportings) {
+        if (!reportings || reportings.length === 0) return;
+        
+        console.log('loadToolReportingActions called with', reportings.length, 'reportings');
+        
+        for (let rep of reportings) {
+            try {
+                // First, try to get action for this specific reporting
+                const response = await fetch(`/api/tool-reporting-action/${rep._id}`);
+                if (response.ok) {
+                    const data = await response.json();
+                    console.log('Loaded action for reporting', rep._id, ':', data.action_status);
+                    const select = document.querySelector(`[data-reporting-id="${rep._id}"]`);
+                    
+                    if (!select) {
+                        console.log('No select element found for', rep._id);
+                        continue;
+                    }
+                    
+                    // If action_status is valid and not default, apply it
+                    if (data.action_status && data.action_status !== 'no action') {
+                        select.value = data.action_status;
+                        applyActionStyleToSelect(select, data.action_status);
+                        console.log('Applied action', data.action_status, 'to select');
+                    } else {
+                        // No action or default action, try to carry forward from previous
+                        console.log('No previous action for this reporting, checking for carried forward action...');
+                        await loadCarriedForwardAction(rep, select);
+                    }
+                } else {
+                    console.log('Error loading action for', rep._id, ':', response.status);
+                }
+            } catch (error) {
+                console.error(`Error loading action for ${rep._id}:`, error);
+            }
+        }
+    }
+    
+    async function loadCarriedForwardAction(rep, select) {
+        if (!select) return;
+        
+        try {
+            // Use data attributes from select if available, otherwise use rep object
+            const toolName = select.dataset.toolName || rep.tool_name;
+            const category = select.dataset.category || rep.category;
+            const uniqueId = select.dataset.uniqueId || rep.unique_id;
+            
+            console.log('[CARRY-FORWARD] Tool identifier:', {toolName, category, uniqueId});
+            console.log('[CARRY-FORWARD] Rep object:', {tool_name: rep.tool_name, category: rep.category, unique_id: rep.unique_id});
+            console.log('[CARRY-FORWARD] Data attributes:', {toolName: select.dataset.toolName, category: select.dataset.category, uniqueId: select.dataset.uniqueId});
+            
+            const url = `/api/tool-action-by-identifier/${encodeURIComponent(toolName)}/${encodeURIComponent(category)}/${encodeURIComponent(uniqueId)}`;
+            console.log('[CARRY-FORWARD] Fetching from:', url);
+            
+            const response = await fetch(url);
+            if (response.ok) {
+                const data = await response.json();
+                console.log('[CARRY-FORWARD] API Response:', data);
+                
+                if (data.has_previous && data.action_status && data.action_status !== 'no action') {
+                    select.value = data.action_status;
+                    applyActionStyleToSelect(select, data.action_status);
+                    console.log('[CARRY-FORWARD] ✓ Applied action', data.action_status, 'for tool:', toolName);
+                    
+                    // Add visual indicator that this was carried forward
+                    const parent = select.closest('td');
+                    if (parent && !parent.querySelector('.carried-forward-badge')) {
+                        const badge = document.createElement('small');
+                        badge.className = 'carried-forward-badge';
+                        badge.style.color = '#666';
+                        badge.style.marginLeft = '5px';
+                        badge.innerHTML = '(↻ carried)';
+                        parent.appendChild(badge);
+                    }
+                } else {
+                    console.log('[CARRY-FORWARD] ✗ No valid carried action available. has_previous:', data.has_previous, 'action_status:', data.action_status);
+                }
+            } else {
+                console.log('[CARRY-FORWARD] ✗ API Error:', response.status);
+            }
+        } catch (error) {
+            console.error('[CARRY-FORWARD] ✗ Exception:', error);
+        }
+    }
+    
+    function applyActionStyleToSelect(selectElement, status) {
+        const colorMap = {
+            'no action': '#d3d3d3',
+            'reviewing': '#ffc107',
+            'resolved': '#28a745',
+            'dismiss': '#ff9800'
+        };
+        
+        selectElement.style.backgroundColor = colorMap[status] || '#d3d3d3';
+        selectElement.style.color = (status === 'resolved' || status === 'dismiss') ? 'white' : 'black';
+    }
+    
+    function setupActionDropdownListeners() {
+        const selects = document.querySelectorAll('.tool-action-select');
+        selects.forEach(select => {
+            // Remove any existing listeners
+            const newSelect = select.cloneNode(true);
+            select.parentNode.replaceChild(newSelect, select);
+            
+            // Add new listener
+            newSelect.addEventListener('change', (e) => {
+                applyActionStyleToSelect(e.target, e.target.value);
+            });
+        });
+    }
+    
+    function setupRecordActionsButton() {
+        // Use event delegation on document for dynamically created buttons
+        document.removeEventListener('click', handleRecordActionsClick);
+        document.addEventListener('click', handleRecordActionsClick);
+    }
+    
+    async function handleRecordActionsClick(e) {
+        if (e.target && e.target.id === 'recordActionsBtn') {
+            e.preventDefault();
+            e.stopPropagation();
+            await saveToolReportingActions();
+        }
+    }
+    
+    async function saveToolReportingActions() {
+        console.log('saveToolReportingActions called');
+        const selects = document.querySelectorAll('.tool-action-select');
+        console.log('Found selects:', selects.length);
+        const actions = [];
+        
+        selects.forEach(select => {
+            const reportingId = select.dataset.reportingId;
+            const toolName = select.dataset.toolName;
+            const category = select.dataset.category;
+            const uniqueId = select.dataset.uniqueId;
+            const status = select.value;
+            
+            console.log('Processing select:', {reportingId, toolName, category, uniqueId, status});
+            
+            if (status && toolName && category && uniqueId) {
+                actions.push({
+                    reporting_id: reportingId,
+                    tool_name: toolName,
+                    category: category,
+                    unique_id: uniqueId,
+                    status: status
+                });
+            }
+        });
+        
+        console.log('Actions to save:', actions);
+        if (actions.length === 0) {
+            alert('No actions to save');
+            return;
+        }
+        
+        try {
+            const recordBtn = document.getElementById('recordActionsBtn');
+            if (recordBtn) {
+                recordBtn.disabled = true;
+                recordBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Saving...';
+            }
+            
+            console.log('Sending to /api/batch-tool-reporting-actions:', actions);
+            const response = await fetch('/api/batch-tool-reporting-actions', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(actions)
+            });
+            
+            console.log('Response status:', response.status);
+            if (response.ok) {
+                const result = await response.json();
+                console.log('Success response:', result);
+                const recordBtn = document.getElementById('recordActionsBtn');
+                if (recordBtn) {
+                    recordBtn.innerHTML = '<i class="bi bi-check-circle me-2"></i>Actions Saved!';
+                    recordBtn.classList.add('btn-success');
+                    recordBtn.classList.remove('btn-primary');
+                    
+                    setTimeout(() => {
+                        recordBtn.disabled = false;
+                        recordBtn.innerHTML = 'Record Actions';
+                        recordBtn.classList.remove('btn-success');
+                        recordBtn.classList.add('btn-primary');
+                    }, 2000);
+                }
+            } else {
+                const error = await response.json();
+                console.error('Error response:', error);
+                alert('Error saving actions: ' + (error.detail || error.error || 'Unknown error'));
+                const recordBtn = document.getElementById('recordActionsBtn');
+                if (recordBtn) {
+                    recordBtn.disabled = false;
+                    recordBtn.innerHTML = 'Record Actions';
+                }
+            }
+        } catch (error) {
+            console.error('Exception during save:', error);
+            alert('Error saving actions: ' + error.message);
+            const recordBtn = document.getElementById('recordActionsBtn');
+            if (recordBtn) {
+                recordBtn.disabled = false;
+                recordBtn.innerHTML = 'Record Actions';
+            }
+        }
+    }
+    
+    // Override renderEvaluationReport to add action loading after rendering
+    const originalRenderEvaluationReport = renderEvaluationReport;
+    renderEvaluationReport = function(report) {
+        originalRenderEvaluationReport(report);
+        
+        // Load actions and setup listeners after a short delay to ensure DOM is ready
+        setTimeout(() => {
+            const toolReportings = report.tool_reportings || [];
+            loadToolReportingActions(toolReportings);
+            setupActionDropdownListeners();
+            setupRecordActionsButton();
+        }, 100);
+    };
     
     // Load report when tab is shown
     document.getElementById('evaluation-reports-tab').addEventListener('shown.bs.tab', function() {
